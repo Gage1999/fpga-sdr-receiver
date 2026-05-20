@@ -1,0 +1,31 @@
+fsbl.elf
+--------
+Pre-built First Stage Boot Loader (FSBL) for the fishball7020 board.
+Built from tezuka_fw by F5OEO, licensed under the GNU General Public License v3.
+
+Source: https://github.com/F5OEO/tezuka_fw
+Commit: board/tezuka/fishball7020/bitstream/fsbl.elf
+
+In accordance with GPL v3, the corresponding source code is available at the
+upstream repository linked above. No modifications were made to the source.
+
+u-boot.bin
+----------
+Pre-built U-Boot binary extracted from the tezuka fishball7020 firmware image.
+U-Boot is licensed under the GNU General Public License v2.
+
+Source: https://github.com/F5OEO/tezuka_fw
+
+uEnv.txt
+--------
+U-Boot environment script derived from the tezuka firmware, licensed under the GNU General Public License v3.
+Modified from the original to configure SD card boot with the custom BOOT.BIN.
+
+Source: https://github.com/F5OEO/tezuka_fw
+
+uImage, devicetree.dtb, uramdisk.image.gz
+-----------------------------------------
+Linux kernel, device tree, and ramdisk from the tezuka firmware build, licensed under the GNU General Public License v3.
+The Linux kernel is additionally licensed under GPL v2 with the Linux syscall note exception.
+
+Source: https://github.com/F5OEO/tezuka_fw

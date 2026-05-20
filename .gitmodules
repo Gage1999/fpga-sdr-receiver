@@ -1,0 +1,3 @@
+[submodule "maia-sdr"]
+	path = plutosky/src/maia-sdr
+	url = https://github.com/maia-sdr/maia-sdr.git

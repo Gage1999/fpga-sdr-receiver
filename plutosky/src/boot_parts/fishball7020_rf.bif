@@ -1,0 +1,11 @@
+/* fishball7020 BOOT.BIN, Bank 13 GPIO on JP5 (lines 71-74)
+ * FSBL   : tezuka fishball7020 fsbl.elf
+ * PL     : fishball7020_rf system_top.bit (maia-iio + Bank13 IOBUFs @ EMIO[17:20])
+ * U-Boot : extracted from tezuka BOOT.bin (load/exec 0x04000000)
+ */
+the_ROM_image:
+{
+    [bootloader] fsbl.elf
+    ../fishball7020_rf/fishball7020_rf.runs/impl_1/system_top.bit
+    [load=0x04000000, startup=0x04000000] u-boot.bin
+}
