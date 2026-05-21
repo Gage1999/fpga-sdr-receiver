@@ -24,7 +24,7 @@ Run this if you want to modify the design or need to reproduce the artifacts.
 |---|---|
 | Vivado 2022.1 | Synthesis, implementation, bitstream, bootgen |
 | oss-cad-suite | Yosys for maia_sdr IP generation |
-| Python 3.10+ | Test scripts (`test_gpio.py`, `apt_receive.py`, etc.) |
+| Python 3.10+ | Test scripts (`apt_receive.py`, `test_spi.py`, etc.) |
 
 ### Environment setup
 
@@ -220,16 +220,11 @@ ssh pluto-usb "chmod +x /mnt/jffs2/autorun.sh && sync"
 re-read BOOT.BIN from the SD card.
 
 ```bash
-ssh pluto-usb
-
-# Drive all JP5 pins high
-gpioset gpiochip0 71=1 72=1 73=1 74=1
-
-# Interactive GPIO probe, step through each pin with a multimeter
-python3 plutosky/tests/test_gpio.py
+# Run the AXI SPI probe from the host (sends devmem commands over SSH)
+python3 plutosky/tests/test_spi.py
 ```
 
-Expected: all four pins toggle between ~3.3V and ~0V.
+Expected: SPICR reads back 0x0000009E, CS toggles between ~3.3V and ~0V, SCK idles at ~3.3V (CPOL=1), MOSI follows the last bit of each byte sent.
 
 ### Confirm the right bitstream loaded
 

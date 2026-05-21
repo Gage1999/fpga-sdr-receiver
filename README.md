@@ -51,7 +51,6 @@ plutosky/
     boot_parts/             BOOT.BIN assembly inputs
     maia-sdr/               maia-sdr submodule (pinned commit)
   tests/
-    test_gpio.py            Interactive GPIO probe
     apt_receive.py          NOAA APT satellite image receiver
     fm_test.py              FM demodulation and audio playback test
   docs/
