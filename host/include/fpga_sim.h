@@ -11,6 +11,7 @@ typedef struct {
     ui_state_t  shadow;       // back buffer the wire writes into
     ui_state_t  shadow_front; // front buffer the shader reads from
     aux_roms_t  roms;
+    uint8_t     last_layout;  // layout composited last frame; mode-change detect
 } fpga_sim_t;
 
 void fpga_sim_init(fpga_sim_t *s);

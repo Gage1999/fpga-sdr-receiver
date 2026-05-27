@@ -48,6 +48,7 @@ void fpga_sim_init(fpga_sim_t *s) {
     ui_state_default(&s->shadow);
     ui_state_default(&s->shadow_front);
     aux_roms_default(&s->roms);
+    s->last_layout = s->shadow_front.layout;
     g_ring_len = 0;
     touch_queue_init(&g_fpga_touchq);
 }
@@ -63,6 +64,15 @@ void fpga_sim_tick(fpga_sim_t *s, uint16_t *pixels_out) {
 
     // V-sync: flip the UI state shadow buffer (arch doc §8).
     s->shadow_front = s->shadow;
+
+    // Mode change: the FB-backed regions (waterfall/GOES/ADS-B) read straight
+    // from the framebuffer, so on a layout switch a region newly exposed in the
+    // new mode would otherwise show leftover pixels from the old one. Clear both
+    // planes to black so the new mode composites onto a clean surface.
+    if (s->shadow_front.layout != s->last_layout) {
+        fb_host_clear(&s->fb, 0);
+        s->last_layout = s->shadow_front.layout;
+    }
 
     // Compositor side: synth_data is the stand-in for the Zynq DSP feed.
     uint8_t mags[800];
