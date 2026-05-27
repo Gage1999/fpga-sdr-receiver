@@ -1,0 +1,10 @@
+{
+  "center_lat": 33.9737,
+  "center_lon": -117.3281,
+  "zoom": 8,
+  "meters_per_px": 538.843,
+  "width": 800,
+  "height": 448,
+  "radius_mi": 75.0,
+  "outer_ring_px": 224
+}

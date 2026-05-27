@@ -48,3 +48,22 @@ Thumbs.db
 *.swp
 *.swo
 *~
+
+# C / CMake host harness (icesugar_pro spec, pico2w firmware, host/, tests/)
+build/
+build-*/
+.cache/
+compile_commands.json
+*.o
+*.obj
+*.a
+*.so
+*.dylib
+*.exe
+.vscode/
+.idea/
+
+# Generated ADS-B basemap blobs (tools/map_to_rom.py) — large, regenerable.
+# The .png preview and .json metadata are kept; the image data is not.
+icesugar_pro/model/assets/*.bin
+icesugar_pro/model/assets/*.mem
