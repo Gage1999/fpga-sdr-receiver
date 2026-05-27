@@ -62,3 +62,8 @@ compile_commands.json
 *.exe
 .vscode/
 .idea/
+
+# Generated ADS-B basemap blobs (tools/map_to_rom.py) — large, regenerable.
+# The .png preview and .json metadata are kept; the image data is not.
+icesugar_pro/model/assets/*.bin
+icesugar_pro/model/assets/*.mem

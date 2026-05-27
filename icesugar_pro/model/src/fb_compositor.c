@@ -58,32 +58,75 @@ void fb_compose_clear(fb_t *fb, region_t r, uint16_t color) {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// ADS-B map. Procedural placeholder basemap (dark ground, 64-px grid, one
-// slanted "river" band standing in for the Santa Ana through Riverside) plus
-// an amber dot per aircraft. All integer math — shifts, adds, compares — so it
-// maps cleanly to a write-side FSM on the ECP5. TODO: replace the procedural
-// basemap with a real Riverside map-image ROM; the plane overlay stays.
+// ADS-B map. Stylized UCR-centered placeholder: a center marker for the campus,
+// concentric range rings at 25/50/75 mi (the outer being the nominal reception
+// radius), a cardinal crosshair, and dimmer "beyond range" shading outside the
+// outer ring. Aircraft are amber dots on top. All integer math — adds, multiplies,
+// compares — so it maps to a write-side FSM on the ECP5. The real Riverside map
+// image replaces only the basemap (see fb_compositor.h); rings/marker/planes stay.
 // ──────────────────────────────────────────────────────────────────────────────
 
-#define ADSB_BG     RGB565(8, 20, 28)
-#define ADSB_GRID   RGB565(20, 40, 52)
-#define ADSB_RIVER  RGB565(28, 92, 130)
-#define ADSB_PLANE  RGB565(255, 210, 40)
-#define ADSB_CORE   RGB565(255, 255, 255)
+#define ADSB_CX        400   // region-local center (UCR), = w/2
+#define ADSB_CY        224   //                            = h/2
+#define ADSB_R_25      75    // 224 * 25/75
+#define ADSB_R_50      149   // 224 * 50/75
+// outer ring (75 mi) is ADSB_R_OUTER from the header
+
+#define ADSB_IN_BG     RGB565(8, 20, 28)     // inside coverage
+#define ADSB_OUT_BG    RGB565(3, 8, 12)      // beyond the outer ring
+#define ADSB_RING_C    RGB565(40, 90, 80)    // range rings
+#define ADSB_CARD_C    RGB565(24, 50, 46)    // cardinal crosshair
+#define ADSB_CENTER_C  RGB565(90, 200, 255)  // UCR marker (cyan)
+#define ADSB_LABEL_C   RGB565(120, 200, 180) // ring labels
+#define ADSB_PLANE     RGB565(255, 210, 40)
+#define ADSB_CORE      RGB565(255, 255, 255)
+
+// True if d2 lands within ~2 px of the circle of radius R: (R-1)^2 <= d2 <= (R+1)^2.
+static int adsb_on_ring(int32_t d2, int32_t R) {
+    return d2 >= (R - 1) * (R - 1) && d2 <= (R + 1) * (R + 1);
+}
 
 static uint16_t adsb_basemap_pixel(uint16_t lx, uint16_t ly) {
-    // Slanted river: center x walks right as we go down (rx = 120 + ly*3/4).
-    uint16_t rx = (uint16_t)(120 + (ly * 3u) / 4u);
-    uint16_t dx = (lx > rx) ? (uint16_t)(lx - rx) : (uint16_t)(rx - lx);
-    if (dx < 14) return ADSB_RIVER;
-    if ((lx & 63u) == 0 || (ly & 63u) == 0) return ADSB_GRID;
-    return ADSB_BG;
+    int32_t dx = (int32_t)lx - ADSB_CX;
+    int32_t dy = (int32_t)ly - ADSB_CY;
+    int32_t adx = dx < 0 ? -dx : dx;
+    int32_t ady = dy < 0 ? -dy : dy;
+    int32_t d2  = dx * dx + dy * dy;
+    const int32_t r_out2 = ADSB_R_OUTER * ADSB_R_OUTER;
+
+    if (adx + ady <= 3) return ADSB_CENTER_C;   // UCR marker (filled diamond)
+    if (adsb_on_ring(d2, ADSB_R_25) ||
+        adsb_on_ring(d2, ADSB_R_50) ||
+        adsb_on_ring(d2, ADSB_R_OUTER)) return ADSB_RING_C;
+    if (d2 <= r_out2 && (dx == 0 || dy == 0)) return ADSB_CARD_C;  // crosshair
+    return (d2 <= r_out2) ? ADSB_IN_BG : ADSB_OUT_BG;
+}
+
+// Blit an ASCII string in the 8x16 font at region-local (lx, ly), clipped to r.
+static void adsb_text(fb_t *fb, region_t r, int32_t lx, int32_t ly,
+                      const char *s, uint16_t color, const uint8_t *font) {
+    for (int ci = 0; s[ci]; ci++) {
+        uint8_t idx = (uint8_t)s[ci];
+        if (idx < FONT_8X16_FIRST || idx >= FONT_8X16_FIRST + FONT_8X16_COUNT) idx = '?';
+        const uint8_t *glyph = &font[(uint32_t)(idx - FONT_8X16_FIRST) * FONT_8X16_H];
+        for (uint8_t gy = 0; gy < FONT_8X16_H; gy++) {
+            uint8_t row = glyph[gy];
+            for (uint8_t gx = 0; gx < 8; gx++) {
+                if (!(row & (uint8_t)(1u << (7 - gx)))) continue;
+                int32_t X = lx + ci * 8 + gx;
+                int32_t Y = ly + gy;
+                if (X < 0 || X >= (int32_t)r.w || Y < 0 || Y >= (int32_t)r.h) continue;
+                fb_write(fb, (uint16_t)(r.x0 + X), (uint16_t)(r.y0 + Y), color);
+            }
+        }
+    }
 }
 
 void fb_compose_adsb_frame(fb_t *fb,
                            uint8_t layout,
                            const adsb_plane_t *planes,
-                           uint8_t n_planes) {
+                           uint8_t n_planes,
+                           const aux_roms_t *roms) {
     region_t r = region_for_kind(R_ADSB, layout);
     if (r.kind != R_ADSB || r.w == 0 || r.h == 0) return;
 
@@ -97,6 +140,12 @@ void fb_compose_adsb_frame(fb_t *fb,
         }
         fb_write_row(fb, r.x0, (uint16_t)(r.y0 + ly), scratch, n);
     }
+
+    // Labels: campus + range rings (distance in miles up the north axis).
+    adsb_text(fb, r, ADSB_CX + 6,  ADSB_CY - 6,                "UCR",   ADSB_CENTER_C, roms->font_8x16);
+    adsb_text(fb, r, ADSB_CX + 5,  ADSB_CY - ADSB_R_25 - 8,    "25",    ADSB_LABEL_C,  roms->font_8x16);
+    adsb_text(fb, r, ADSB_CX + 5,  ADSB_CY - ADSB_R_50 - 8,    "50",    ADSB_LABEL_C,  roms->font_8x16);
+    adsb_text(fb, r, ADSB_CX + 5,  ADSB_CY - ADSB_R_OUTER + 4, "75 MI", ADSB_LABEL_C,  roms->font_8x16);
 
     // Aircraft: a 5-px diamond (|dx|+|dy| <= 2) with a white core, clipped.
     for (uint8_t i = 0; i < n_planes && i < ADSB_MAX_PLANES; i++) {

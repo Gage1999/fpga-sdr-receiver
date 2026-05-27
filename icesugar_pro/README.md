@@ -39,6 +39,15 @@ python3 tools/rom_to_mem.py --out icesugar_pro/mem
 
 These are committed when the gateware build needs them, not before.
 
+## ADS-B basemap
+
+The ADS-B map mode needs a static basemap image in SDRAM (`ADSB_BASEMAP`).
+[`tools/map_to_rom.py`](../tools/map_to_rom.py) fetches it from a slippy-map tile
+server centered on a given lat/lon and emits RGB565 (`.bin`/`.mem`) at the
+renderer's scale. See [`model/assets/README.md`](model/assets/README.md). Until
+that image is loaded, the C reference model draws a stylized UCR-centered
+placeholder (range rings + marker).
+
 ## SDRAM controller
 
 We need an SDRAM controller regardless of render mode. The professor's
