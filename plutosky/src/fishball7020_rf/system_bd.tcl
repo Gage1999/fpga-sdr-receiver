@@ -6,17 +6,19 @@
 #   - LVDS RF interface  (fishball7020 AD9363 runs in LVDS mode)
 #   - XC7Z020 / CLG400  (32-bit DDR, 54-pin MIO, USB reset on MIO 46)
 #   - fishball7020 PS7 PCW parameters (DDR delays from tezuka HWH)
-#   - 21-bit EMIO GPIO  (bits 0-16 = pluto-compatible AD9363 control + up_enable/up_txnrx;
-#                         bits 17-20 = Bank 13 JP5 IOBUFs → gpiochip0 lines 71-74)
+#   - 21-bit EMIO GPIO  (bits 0-16 = AD9363 control + up_enable/up_txnrx; bits 17-20 = loopback/unused)
+#                        width fixed at 21 to preserve IOPLL init for USB HS clock
+#   - AXI Quad SPI on JP5 Bank 13 pins (Bank 13 pins no longer EMIO)
 #
 # AXI address map (matches tezuka device tree and maia_sdr.ko):
 #   0x79020000  axi_ad9361
 #   0x7C400000  axi_ad9361_adc_dma
 #   0x7C420000  axi_ad9361_dac_dma
+#   0x7C440000  axi_spi_jp5
 #   0x7C460000  maia_sdr
 
 # ---------------------------------------------------------------------------
-# IP repository — must be set here; adi_project_create overwrites prior settings
+# IP repository - must be set here; adi_project_create overwrites prior settings
 # Paths are relative to the Vivado project directory (fishball7020_rf/fishball7020_rf/)
 # ---------------------------------------------------------------------------
 
@@ -44,15 +46,24 @@ create_bd_port -dir I spi0_sdo_i
 create_bd_port -dir O spi0_sdo_o
 create_bd_port -dir I spi0_sdi_i
 
-# EMIO GPIO — 21 bits
+# EMIO GPIO, 21 bits (must match original PS7 init to preserve IOPLL/USB clock)
 #   [13: 0] AD9363 control (gpio_status[7:0], gpio_ctl[3:0], gpio_en_agc, gpio_resetb)
 #   [14]    unused (loopback)
-#   [15]    up_enable → axi_ad9361
-#   [16]    up_txnrx  → axi_ad9361
-#   [17:20] Bank 13 JP5 IOBUFs (io_3v3_0..3) → gpiochip0 lines 71-74
+#   [15]    up_enable
+#   [16]    up_txnrx
+#   [20:17] unused (loopback) - JP5 pins are now AXI SPI, not EMIO
 create_bd_port -dir I -from 20 -to 0 gpio_i
 create_bd_port -dir O -from 20 -to 0 gpio_o
 create_bd_port -dir O -from 20 -to 0 gpio_t
+
+# JP5 AXI SPI master
+create_bd_port -dir O jp5_spi_csn_o
+create_bd_port -dir I jp5_spi_csn_i
+create_bd_port -dir I jp5_spi_clk_i
+create_bd_port -dir O jp5_spi_clk_o
+create_bd_port -dir I jp5_spi_mosi_i
+create_bd_port -dir O jp5_spi_mosi_o
+create_bd_port -dir I jp5_spi_miso_i
 
 # AD9363 LVDS data interface
 create_bd_port -dir I rx_clk_in_p
@@ -80,7 +91,7 @@ create_bd_port -dir I up_txnrx
 
 ad_ip_instance processing_system7 sys_ps7
 
-# Package and bank voltages — fishball7020 CLG400
+# Package and bank voltages - fishball7020 CLG400
 ad_ip_parameter sys_ps7 CONFIG.PCW_PACKAGE_NAME              clg400
 ad_ip_parameter sys_ps7 CONFIG.PCW_PRESET_BANK0_VOLTAGE      {LVCMOS 3.3V}
 ad_ip_parameter sys_ps7 CONFIG.PCW_PRESET_BANK1_VOLTAGE      {LVCMOS 1.8V}
@@ -95,7 +106,7 @@ ad_ip_parameter sys_ps7 CONFIG.PCW_EN_RST1_PORT 1
 ad_ip_parameter sys_ps7 CONFIG.PCW_FPGA0_PERIPHERAL_FREQMHZ 100.0
 ad_ip_parameter sys_ps7 CONFIG.PCW_FPGA1_PERIPHERAL_FREQMHZ 200.0
 
-# EMIO GPIO — 21 bits
+# EMIO GPIO, 21 bits - must stay at 21 to preserve IOPLL init sequence for USB HS
 ad_ip_parameter sys_ps7 CONFIG.PCW_GPIO_EMIO_GPIO_ENABLE 1
 ad_ip_parameter sys_ps7 CONFIG.PCW_GPIO_EMIO_GPIO_IO     21
 ad_ip_parameter sys_ps7 CONFIG.PCW_GPIO_MIO_GPIO_ENABLE  1
@@ -172,6 +183,11 @@ ad_ip_parameter sys_concat_intc CONFIG.NUM_PORTS 16
 ad_ip_instance proc_sys_reset sys_rstgen
 ad_ip_parameter sys_rstgen CONFIG.C_EXT_RST_WIDTH 1
 
+ad_ip_instance axi_quad_spi axi_spi_jp5
+ad_ip_parameter axi_spi_jp5 CONFIG.C_USE_STARTUP 0
+ad_ip_parameter axi_spi_jp5 CONFIG.C_NUM_SS_BITS 1
+ad_ip_parameter axi_spi_jp5 CONFIG.C_SCK_RATIO 8
+
 ad_connect sys_cpu_clk  sys_ps7/FCLK_CLK0
 ad_connect sys_200m_clk sys_ps7/FCLK_CLK1
 ad_connect sys_cpu_reset   sys_rstgen/peripheral_reset
@@ -196,6 +212,16 @@ ad_connect spi0_clk_o   sys_ps7/SPI0_SCLK_O
 ad_connect spi0_sdo_i   sys_ps7/SPI0_MOSI_I
 ad_connect spi0_sdo_o   sys_ps7/SPI0_MOSI_O
 ad_connect spi0_sdi_i   sys_ps7/SPI0_MISO_I
+
+# JP5 AXI SPI
+ad_connect sys_cpu_clk      axi_spi_jp5/ext_spi_clk
+ad_connect jp5_spi_csn_i    axi_spi_jp5/ss_i
+ad_connect jp5_spi_csn_o    axi_spi_jp5/ss_o
+ad_connect jp5_spi_clk_i    axi_spi_jp5/sck_i
+ad_connect jp5_spi_clk_o    axi_spi_jp5/sck_o
+ad_connect jp5_spi_mosi_i   axi_spi_jp5/io0_i
+ad_connect jp5_spi_mosi_o   axi_spi_jp5/io0_o
+ad_connect jp5_spi_miso_i   axi_spi_jp5/io1_i
 
 # Interrupt concatenator (unused slots tied to GND)
 ad_connect sys_concat_intc/dout sys_ps7/IRQ_F2P
@@ -252,7 +278,7 @@ ad_connect sys_200m_clk        axi_ad9361/delay_clk
 ad_connect axi_ad9361/l_clk    axi_ad9361/clk
 
 # ---------------------------------------------------------------------------
-# ADC data slices (12 MSBs of the 16-bit adc_data → maia 12-bit input)
+# ADC data slices (12 MSBs of the 16-bit adc_data -> maia 12-bit input)
 # ---------------------------------------------------------------------------
 
 ad_ip_instance xlslice adc_i_slice
@@ -296,7 +322,7 @@ set_property -dict [list \
     CONFIG.CLKOUT3_JITTER           {108.217}       \
     CONFIG.CLKOUT3_PHASE_ERROR      {91.100}] [get_bd_cells maia_sdr_clk]
 
-# Data path: adc slices → maia
+# Data path: adc slices -> maia
 ad_connect axi_ad9361/adc_data_i0 adc_i_slice/Din
 ad_connect axi_ad9361/adc_data_q0 adc_q_slice/Din
 ad_connect adc_i_slice/Dout        maia_sdr/re_in
@@ -539,6 +565,7 @@ ad_cpu_interconnect 0x79020000 axi_ad9361
 ad_cpu_interconnect 0x7C460000 maia_sdr
 ad_cpu_interconnect 0x7C400000 axi_ad9361_adc_dma
 ad_cpu_interconnect 0x7C420000 axi_ad9361_dac_dma
+ad_cpu_interconnect 0x7C440000 axi_spi_jp5
 
 # HP1 -- maia spectrometer DMA
 ad_ip_parameter sys_ps7 CONFIG.PCW_USE_S_AXI_HP1 {1}
@@ -563,3 +590,4 @@ ad_mem_hp2_interconnect sys_cpu_clk axi_ad9361_dac_dma/m_src_axi
 ad_cpu_interrupt ps-13 mb-13 axi_ad9361_adc_dma/irq
 ad_cpu_interrupt ps-12 mb-12 axi_ad9361_dac_dma/irq
 ad_cpu_interrupt ps-11 mb-11 maia_sdr/interrupt_out
+ad_cpu_interrupt ps-10 mb-10 axi_spi_jp5/ip2intc_irpt

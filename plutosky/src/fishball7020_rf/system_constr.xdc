@@ -3,9 +3,9 @@
 # Pin constraints for fishball7020 (PlutoSky 7020, XC7Z020-2CLG400I).
 # Verified against fishball7020.pdf schematic.
 #
-# Bank 34  VCCO = 2.5V → LVDS_25 / LVCMOS25
-# Bank 35  VCCO = 1.8V → LVCMOS18
-# Bank 13  VCCO = 3.3V → LVCMOS33
+# Bank 34  VCCO = 2.5V -> LVDS_25 / LVCMOS25
+# Bank 35  VCCO = 1.8V -> LVCMOS18
+# Bank 13  VCCO = 3.3V -> LVCMOS33
 
 # =============================================================================
 # AD9363 LVDS data interface, Bank 34 (LVDS_25, VCCO=2.5V)
@@ -62,7 +62,7 @@ set_property  -dict {PACKAGE_PIN  P16  IOSTANDARD LVCMOS25} [get_ports spi_mosi]
 set_property  -dict {PACKAGE_PIN  V17  IOSTANDARD LVCMOS25} [get_ports spi_miso]  ; ## SPI_MISO
 
 # =============================================================================
-# AD9363 CTRL_OUT[7:0] → gpio_status[7:0]   EMIO[7:0]  gpiochip0 54-61
+# AD9363 CTRL_OUT[7:0] -> gpio_status[7:0]   EMIO[7:0]  gpiochip0 54-61
 # Bank 34 (LVCMOS25): T14, P15, N20
 # Bank 35 (LVCMOS18): L20, L19, K19, M20, M19
 # =============================================================================
@@ -77,7 +77,7 @@ set_property  -dict {PACKAGE_PIN  M19  IOSTANDARD LVCMOS18} [get_ports {gpio_sta
 set_property  -dict {PACKAGE_PIN  N20  IOSTANDARD LVCMOS25} [get_ports {gpio_status[7]}]  ; ## CTRL_OUT7  Bank 34  EMIO[7]
 
 # =============================================================================
-# AD9363 CTRL_IN[3:0] → gpio_ctl[3:0]   EMIO[11:8]  gpiochip0 62-65
+# AD9363 CTRL_IN[3:0] -> gpio_ctl[3:0]   EMIO[11:8]  gpiochip0 62-65
 # Bank 34 (LVCMOS25): R14
 # Bank 35 (LVCMOS18): J19, K14, J20
 # =============================================================================
@@ -88,15 +88,13 @@ set_property  -dict {PACKAGE_PIN  R14  IOSTANDARD LVCMOS25} [get_ports {gpio_ctl
 set_property  -dict {PACKAGE_PIN  J20  IOSTANDARD LVCMOS18} [get_ports {gpio_ctl[3]}]  ; ## CTRL_IN3  Bank 35  EMIO[11]
 
 # =============================================================================
-# Bank 13 GPIO, JP5 connector (LVCMOS33, VCCO=3.3V)
-# EMIO[17:20] = gpiochip0 lines 71-74
-# Use: gpioset gpiochip0 71=1 72=1 73=1 74=1
+# JP5 AXI SPI master, Bank 13 (LVCMOS33, VCCO=3.3V)
 # =============================================================================
 
-set_property  -dict {PACKAGE_PIN  V10  IOSTANDARD LVCMOS33  DRIVE 12} [get_ports io_3v3_0]  ; ## JP5 pin 7  V10  EMIO[17] line 71
-set_property  -dict {PACKAGE_PIN  U9   IOSTANDARD LVCMOS33} [get_ports io_3v3_1]             ; ## JP5 pin 9  U9   EMIO[18] line 72
-set_property  -dict {PACKAGE_PIN  U10  IOSTANDARD LVCMOS33} [get_ports io_3v3_2]             ; ## JP5 pin 11 U10  EMIO[19] line 73
-set_property  -dict {PACKAGE_PIN  T9   IOSTANDARD LVCMOS33} [get_ports io_3v3_3]             ; ## JP5 pin 13 T9   EMIO[20] line 74
+set_property  -dict {PACKAGE_PIN  V10  IOSTANDARD LVCMOS33  DRIVE 12} [get_ports jp5_spi_clk]   ; ## JP5 pin 7
+set_property  -dict {PACKAGE_PIN  U9   IOSTANDARD LVCMOS33  DRIVE 12} [get_ports jp5_spi_mosi]  ; ## JP5 pin 9
+set_property  -dict {PACKAGE_PIN  U10  IOSTANDARD LVCMOS33  PULLTYPE PULLDOWN} [get_ports jp5_spi_miso]  ; ## JP5 pin 11
+set_property  -dict {PACKAGE_PIN  T9   IOSTANDARD LVCMOS33  DRIVE 12} [get_ports jp5_spi_csn]   ; ## JP5 pin 13
 
 # =============================================================================
 # Timing false paths (from maia pluto constraints)
