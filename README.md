@@ -108,37 +108,29 @@ cmake --build build -j
 ctest --test-dir build --output-on-failure
 ./build/host_harness             # live demo
 ```
+plutosky/
+  src/
+    fishball7020_rf/        Vivado project (bitstream source)
+    board/                  Board scripts deployed to /mnt/jffs2/
+    boot_parts/             BOOT.BIN assembly inputs
+    maia-sdr/               maia-sdr submodule (pinned commit)
+  tests/
+    apt_receive.py          NOAA APT satellite image receiver
+    fm_test.py              FM demodulation and audio playback test
+  docs/
+    architecture.md         Hardware, boot chain, FPGA design
+    build_guide.md          Step-by-step bitstream and BOOT.BIN rebuild
+    ssh_setup.md            SSH key setup on a fresh board
 
-Disable the host target if you only want tests (e.g. a CI runner without SDL):
+icesugar_pro/
+  src/                      ECP5 firmware source (in development)
+  tests/
+  docs/
 
-```sh
-cmake -B build -DBUILD_HOST_HARNESS=OFF
-```
-
-### Live demo controls
-
-| Input | Action |
-|---|---|
-| Mouse left-click+drag | Touch down/move/up |
-| ←/→ | Span out/in (swipe gesture) |
-| ↑/↓ | Tap freq tune buttons |
-| 1/2/3/4 | Cycle layout (spectrum / split / GOES-full / ADS-B map) |
-| M | Mute toggle |
-| R | Record toggle |
-| L | Long-press gesture |
-| Space | Tap at cursor |
-| F11 | Fullscreen |
-| Esc | Quit |
-
-### Tests & golden images
-
-`ctest` runs without SDL. Golden images for the shader and compositor live in
-`tests/golden/` (committed `.ppm`). To regenerate them after an intentional
-rendering change:
-
-```sh
-./build/tests/test_pixel_shader  --update-goldens
-./build/tests/test_fb_compositor --update-goldens
+pico2w/
+  src/                      RP2350 firmware source (in development)
+  tests/
+  docs/
 ```
 
 ---

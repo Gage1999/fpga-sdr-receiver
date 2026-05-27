@@ -1,26 +1,14 @@
-// ***************************************************************************
 // fishball7020_rf/system_top.v
 //
-// Top-level for fishball7020 (PlutoSky 7020, XC7Z020-2CLG400I).
-// Based on maia-hdl/projects/pluto/system_top.v, adapted for:
-//   - LVDS RF interface  (differential pairs, not single-ended CMOS)
-//   - Z7020 DDR          (32-bit bus, [3:0] dm/dqs, [31:0] dq)
-//   - 54-pin MIO         ([53:0] fixed_io_mio)
-//   - 21-bit EMIO GPIO   (pluto-compatible mapping + Bank 13 IOBUFs)
-//
 // EMIO GPIO mapping (gpiochip0 lines = 54 + EMIO index):
-//   EMIO[ 7: 0] = gpio_status[7:0]  AD9363 CTRL_OUT  → lines 54-61
-//   EMIO[11: 8] = gpio_ctl[3:0]     AD9363 CTRL_IN   → lines 62-65
-//   EMIO[12]    = gpio_en_agc        AD9363 EN_AGC    → line  66
-//   EMIO[13]    = gpio_resetb        AD9363 RESET_B   → line  67
-//   EMIO[14]    = (loopback)                          → line  68
-//   EMIO[15]    = up_enable → axi_ad9361              → line  69
-//   EMIO[16]    = up_txnrx  → axi_ad9361              → line  70
-//   EMIO[17]    = io_3v3_0  JP5 pin 7  V10 Bank 13   → line  71
-//   EMIO[18]    = io_3v3_1  JP5 pin 9  U9  Bank 13   → line  72
-//   EMIO[19]    = io_3v3_2  JP5 pin 11 U10 Bank 13   → line  73
-//   EMIO[20]    = io_3v3_3  JP5 pin 13 T9  Bank 13   → line  74
-// ***************************************************************************
+//   EMIO[ 7: 0] = gpio_status[7:0]  AD9363 CTRL_OUT  lines 54-61
+//   EMIO[11: 8] = gpio_ctl[3:0]     AD9363 CTRL_IN   lines 62-65
+//   EMIO[12]    = gpio_en_agc        AD9363 EN_AGC    line  66
+//   EMIO[13]    = gpio_resetb        AD9363 RESET_B   line  67
+//   EMIO[14]    = (loopback)                          line  68
+//   EMIO[15]    = up_enable -> axi_ad9361             line  69
+//   EMIO[16]    = up_txnrx  -> axi_ad9361             line  70
+//   JP5 pins (V10/U9/U10/T9) are driven by axi_spi1, not PS GPIO
 
 `timescale 1ns/100ps
 
@@ -70,10 +58,10 @@ module system_top (
   output          txnrx,
 
   // AD9363 GPIO, Banks 34/35, via ad_iobuf EMIO[13:0]
-  inout           gpio_resetb,    // EMIO[13] → RESET_B
-  inout           gpio_en_agc,    // EMIO[12] → EN_AGC
-  inout   [ 3:0]  gpio_ctl,       // EMIO[11:8] → CTRL_IN[3:0]
-  inout   [ 7:0]  gpio_status,    // EMIO[7:0]  → CTRL_OUT[7:0]
+  inout           gpio_resetb,
+  inout           gpio_en_agc,
+  inout   [ 3:0]  gpio_ctl,
+  inout   [ 7:0]  gpio_status,
 
   // AD9363 SPI0, Bank 34
   output          spi_csn,
@@ -81,18 +69,23 @@ module system_top (
   output          spi_mosi,
   input           spi_miso,
 
-  // Bank 13 GPIO, JP5 connector (LVCMOS33)
-  // EMIO[17:20] = gpiochip0 lines 71-74
-  inout           io_3v3_0,   // JP5 pin 7  → V10  EMIO[17] line 71
-  inout           io_3v3_1,   // JP5 pin 9  → U9   EMIO[18] line 72
-  inout           io_3v3_2,   // JP5 pin 11 → U10  EMIO[19] line 73
-  inout           io_3v3_3    // JP5 pin 13 → T9   EMIO[20] line 74
+  // Bank 13 JP5 connector - SPI1 master to iCeSugar Pro (LVCMOS33)
+  output          io_3v3_0,   // JP5 pin 7  V10 - CS (active low)
+  output          io_3v3_1,   // JP5 pin 9  U9  - SCK
+  output          io_3v3_2,   // JP5 pin 11 U10 - MOSI
+  input           io_3v3_3    // JP5 pin 13 T9  - MISO
 );
 
-  // 21-bit EMIO GPIO bus
-  wire    [20:0]  gpio_i;
-  wire    [20:0]  gpio_o;
-  wire    [20:0]  gpio_t;
+  // 17-bit EMIO GPIO bus
+  wire    [16:0]  gpio_i;
+  wire    [16:0]  gpio_o;
+  wire    [16:0]  gpio_t;
+
+  // SPI1 wires from axi_spi1 via system_wrapper
+  wire            spi1_csn;
+  wire            spi1_clk;
+  wire            spi1_mosi;
+  wire            spi1_miso;
 
   // AD9363 control signals, EMIO[13:0] via ad_iobuf
   ad_iobuf #(.DATA_WIDTH(14)) i_iobuf (
@@ -107,11 +100,11 @@ module system_top (
   // EMIO[14] unused; EMIO[15:16] = up_enable/up_txnrx (internal, loopback)
   assign gpio_i[16:14] = gpio_o[16:14];
 
-  // Bank 13 IOBUFs — EMIO[17:20] → JP5 pins
-  IOBUF iobuf_b13_0 (.IO(io_3v3_0), .I(gpio_o[17]), .O(gpio_i[17]), .T(gpio_t[17]));
-  IOBUF iobuf_b13_1 (.IO(io_3v3_1), .I(gpio_o[18]), .O(gpio_i[18]), .T(gpio_t[18]));
-  IOBUF iobuf_b13_2 (.IO(io_3v3_2), .I(gpio_o[19]), .O(gpio_i[19]), .T(gpio_t[19]));
-  IOBUF iobuf_b13_3 (.IO(io_3v3_3), .I(gpio_o[20]), .O(gpio_i[20]), .T(gpio_t[20]));
+  // JP5 pins driven directly by axi_spi1; no IOBUF needed
+  assign io_3v3_0 = spi1_csn;
+  assign io_3v3_1 = spi1_clk;
+  assign io_3v3_2 = spi1_mosi;
+  assign spi1_miso = io_3v3_3;
 
   system_wrapper i_system_wrapper (
     .ddr_addr           (ddr_addr),
@@ -162,6 +155,10 @@ module system_top (
     .tx_frame_out_p     (tx_frame_out_p),
     .txnrx              (txnrx),
     .up_enable          (gpio_o[15]),
-    .up_txnrx           (gpio_o[16]));
+    .up_txnrx           (gpio_o[16]),
+    .spi1_csn_o         (spi1_csn),
+    .spi1_clk_o         (spi1_clk),
+    .spi1_mosi_o        (spi1_mosi),
+    .spi1_miso_i        (spi1_miso));
 
 endmodule

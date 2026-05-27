@@ -7,28 +7,33 @@ VIVADO="${VIVADO:-/c/Xilinx/Vivado/2022.1}/bin/vivado"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LIB="$SCRIPT_DIR/../maia-sdr/maia-hdl/adi-hdl/library"
 
+# Each entry is "subdir:ip_name" relative to $LIB
 LIBS=(
-  axi_sysid
-  sysid_rom
-  axi_ad9361
-  axi_dmac
-  util_cpack2
-  util_upack2
-  util_clkdiv
-  util_tdd_sync
-  util_rfifo
-  util_wfifo
-  util_reduced_logic
+  "axi_sysid:axi_sysid"
+  "sysid_rom:sysid_rom"
+  "util_axis_fifo:util_axis_fifo"
+  "util_cdc:util_cdc"
+  "axi_ad9361:axi_ad9361"
+  "axi_dmac:axi_dmac"
+  "util_pack/util_cpack2:util_cpack2"
+  "util_pack/util_upack2:util_upack2"
+  "util_clkdiv:util_clkdiv"
+  "util_tdd_sync:util_tdd_sync"
+  "util_rfifo:util_rfifo"
+  "util_wfifo:util_wfifo"
+  "util_reduced_logic:util_reduced_logic"
 )
 
-for ip in "${LIBS[@]}"; do
-  ip_tcl="$LIB/$ip/${ip}_ip.tcl"
+for entry in "${LIBS[@]}"; do
+  subdir="${entry%%:*}"
+  ip="${entry##*:}"
+  ip_tcl="$LIB/$subdir/${ip}_ip.tcl"
   if [ ! -f "$ip_tcl" ]; then
-    echo "SKIP: $ip — no _ip.tcl found"
+    echo "SKIP: $ip - no _ip.tcl found"
     continue
   fi
   echo "=== Packaging $ip ==="
-  (cd "$LIB/$ip" && ADI_IGNORE_VERSION_CHECK=1 "$VIVADO" -mode batch -source "${ip}_ip.tcl" -notrace 2>&1 | tail -5)
+  (cd "$LIB/$subdir" && ADI_IGNORE_VERSION_CHECK=1 "$VIVADO" -mode batch -source "${ip}_ip.tcl" -notrace 2>&1 | tail -5)
   echo ""
 done
 
