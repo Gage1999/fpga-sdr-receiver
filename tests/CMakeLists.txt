@@ -1,7 +1,7 @@
 function(add_triad_test name)
     set(srcs ${ARGN})
     add_executable(${name} ${srcs})
-    target_link_libraries(${name} PRIVATE shared)
+    target_link_libraries(${name} PRIVATE render_model)
     target_include_directories(${name} PRIVATE
         ${CMAKE_SOURCE_DIR}/pico2w/include
     )

@@ -20,7 +20,7 @@ See the architecture doc for the data path and EBR map.
 
 The harness simulates both chips in one host process. The screen renders into an SDL window. Mouse clicks become touch events. The same `.c`/`.h` files in `shared/` and `pico/src/ui_logic.c` build for both Pico and host, with HAL-isolated platform differences.
 
-**Test of success:** when we flash hardware, the C in `shared/src/pixel_shader.c`, `shared/src/fb_compositor.c`, and `pico/src/ui_logic.c` is bit-identical to what ran in the harness. The shader and compositor get hand-translated to SystemVerilog; the C is the executable spec.
+**Test of success:** when we flash hardware, the C in `icesugar_pro/model/src/pixel_shader.c`, `icesugar_pro/model/src/fb_compositor.c`, and `pico/src/ui_logic.c` is bit-identical to what ran in the harness. The shader and compositor get hand-translated to SystemVerilog; the C is the executable spec.
 
 ### Hardware specs
 
@@ -88,7 +88,7 @@ triad-frontend/
 │   │   └── synth_data.c              # fake spectrum/waterfall/GOES
 │   └── CMakeLists.txt
 ├── tools/
-│   └── rom_to_mem.py                 # converts shared/src/font.c arrays to .mem files
+│   └── rom_to_mem.py                 # converts icesugar_pro/model/src/font.c arrays to .mem files
 └── tests/
     ├── CMakeLists.txt
     ├── test_ui_state.c
@@ -376,7 +376,7 @@ Stub a `spi_link_new_socket(const char *path)` for later — same interface, AF_
 
 ## 10. ROMs (font, sprites, palettes)
 
-The shader's EBR ROMs need to be **the same data** on host and FPGA. The C arrays in `shared/src/font.c`, `sprites.c`, `palette.c` are the source of truth.
+The shader's EBR ROMs need to be **the same data** on host and FPGA. The C arrays in `icesugar_pro/model/src/font.c`, `sprites.c`, `palette.c` are the source of truth.
 
 A small Python tool `tools/rom_to_mem.py` parses these C files and emits `.mem` files in the format the ECP5 toolchain consumes for `$readmemh` initialization. CMake runs it as a build step before the FPGA build (when invoked, not in the host build).
 

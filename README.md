@@ -36,15 +36,17 @@ NOAA APT.)
 ```
 plutosky/         PlutoSky 7020 RF front end (Vivado project, board scripts, RX tests)
   src/  tests/  docs/
-icesugar_pro/     ECP5 display gateware (SystemVerilog, in development)
-  src/            SystemVerilog modules
+icesugar_pro/     ECP5 display gateware
+  src/            SystemVerilog modules (in development)
+  model/          C reference model the SV must match byte-for-byte:
+                  pixel shader, framebuffer compositor, region map, ROMs
   README.md       bring-up order + SDRAM controller notes
 pico2w/           Pico 2W UI + touch firmware
   src/  include/  CMakeLists.txt
 
-shared/           PORTABLE C — the executable spec for the ECP5, also built into
-                  the Pico firmware (no malloc/stdio/platform headers)
-host/             SDL host harness — runs shared/ + pico2w/ui_logic on a laptop
+shared/           PORTABLE C Pico↔FPGA contract: UI state + wire protocol +
+                  screen config + touch (no malloc/stdio/platform headers)
+host/             SDL host harness — runs the model + pico2w/ui_logic on a laptop
 tests/            host-side unit + golden-image tests (CI-suitable, no SDL)
 tools/            ROM generators (font/sprite/palette C → .mem for the ECP5)
 docs/             architecture + frontend-harness design docs
@@ -53,13 +55,14 @@ proposal/         project proposal
 
 ### The portability contract
 
-Every line in `shared/` and `pico2w/src/ui_logic.c` is pure portable C (only
-`<stdint.h>`, `<stddef.h>`, `<string.h>`, `<stdbool.h>` — no malloc, no stdio, no
-platform headers). The host harness wraps it through a thin HAL; the Pico firmware
-wraps it through a different HAL with the same signatures. When the SystemVerilog
-gets written, the same test inputs/goldens validate that the gateware produces
-byte-equal output to the C reference in `shared/src/pixel_shader.c` and
-`shared/src/fb_compositor.c`.
+Every line in `shared/`, `icesugar_pro/model/`, and `pico2w/src/ui_logic.c` is
+pure portable C (only `<stdint.h>`, `<stddef.h>`, `<string.h>`, `<stdbool.h>` — no
+malloc, no stdio, no platform headers). The host harness wraps it through a thin
+HAL; the Pico firmware wraps it through a different HAL with the same signatures.
+When the SystemVerilog gets written, the same test inputs/goldens validate that
+the gateware produces byte-equal output to the C reference in
+`icesugar_pro/model/src/pixel_shader.c` and `icesugar_pro/model/src/fb_compositor.c`.
+The Pico itself does no rendering — it only depends on `shared/`.
 
 See [docs/fpga-sdr-receiver-harness.md](docs/fpga-sdr-receiver-harness.md) and
 [docs/fpga-sdr-receiver-architecture.md](docs/fpga-sdr-receiver-architecture.md).

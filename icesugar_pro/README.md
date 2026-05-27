@@ -1,14 +1,15 @@
 # icesugar_pro/
 
 SystemVerilog for the iCESugar-Pro (ECP5-25K) — the screen/rendering subsystem.
-`src/` is empty for now; see
-[../docs/fpga-sdr-receiver-architecture.md](../docs/fpga-sdr-receiver-architecture.md)
-for the planned module breakdown and the SDRAM controller design.
 
-The C in the top-level `shared/` is the **executable spec** for this gateware:
-`shared/src/pixel_shader.c` and `shared/src/fb_compositor.c` define, bit-for-bit,
-what the SystemVerilog must compute. The shared test inputs/goldens in `tests/`
-validate both the C reference and (eventually) the SV.
+- `src/` — the SystemVerilog modules (empty for now); see
+  [../docs/fpga-sdr-receiver-architecture.md](../docs/fpga-sdr-receiver-architecture.md)
+  for the planned module breakdown and the SDRAM controller design.
+- `model/` — the **C reference model**: `pixel_shader.c`, `fb_compositor.c`,
+  `regions.c`, and the font/sprite/palette ROMs. This defines, bit-for-bit, what
+  the SystemVerilog in `src/` must compute. It's portable C, built by the host
+  harness and the `tests/` golden suite so the spec is exercised before any SV
+  exists. The Pico firmware does not use it — it depends only on `shared/`.
 
 ## Bring-up order (mirrors architecture doc §10)
 

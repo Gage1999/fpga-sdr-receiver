@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Generate shared/src/font.c, sprites.c, palette.c from compact descriptions.
+Generate icesugar_pro/model/src/font.c, sprites.c, palette.c from compact descriptions.
 
 Run from the repo root:
     python3 tools/gen_roms.py
@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Iterable
 
 ROOT = Path(__file__).resolve().parent.parent
-SHARED_SRC = ROOT / "shared" / "src"
+MODEL_SRC = ROOT / "icesugar_pro" / "model" / "src"
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -449,8 +449,8 @@ def write_font_c():
     out += emit_halfwords(font_16x32)
     out += "\n};\n"
 
-    (SHARED_SRC / "font.c").write_text(out)
-    print(f"wrote {SHARED_SRC / 'font.c'} ({len(font_8x16)} + {len(font_16x32)*2} bytes of glyph data)")
+    (MODEL_SRC / "font.c").write_text(out)
+    print(f"wrote {MODEL_SRC / 'font.c'} ({len(font_8x16)} + {len(font_16x32)*2} bytes of glyph data)")
 
 
 def write_sprites_c():
@@ -463,8 +463,8 @@ def write_sprites_c():
     out += "const uint16_t sprite_rom[SPRITE_COUNT * SPRITE_PIXELS] = {\n"
     out += emit_halfwords(pixels)
     out += "\n};\n"
-    (SHARED_SRC / "sprites.c").write_text(out)
-    print(f"wrote {SHARED_SRC / 'sprites.c'} ({len(pixels)*2} bytes)")
+    (MODEL_SRC / "sprites.c").write_text(out)
+    print(f"wrote {MODEL_SRC / 'sprites.c'} ({len(pixels)*2} bytes)")
 
 
 def write_palette_c():
@@ -478,12 +478,12 @@ def write_palette_c():
     out += "const uint16_t palette_goes[PALETTE_SIZE] = {\n"
     out += emit_halfwords(goes)
     out += "\n};\n"
-    (SHARED_SRC / "palette.c").write_text(out)
-    print(f"wrote {SHARED_SRC / 'palette.c'}")
+    (MODEL_SRC / "palette.c").write_text(out)
+    print(f"wrote {MODEL_SRC / 'palette.c'}")
 
 
 def main() -> int:
-    SHARED_SRC.mkdir(parents=True, exist_ok=True)
+    MODEL_SRC.mkdir(parents=True, exist_ok=True)
     write_font_c()
     write_sprites_c()
     write_palette_c()

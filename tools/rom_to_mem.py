@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Convert the C arrays in shared/src/{font,sprites,palette}.c to .mem files
+Convert the C arrays in icesugar_pro/model/src/{font,sprites,palette}.c to .mem files
 that the ECP5 toolchain consumes via $readmemh.
 
 This is meant to be called from a future gateware/ build step. The host
@@ -17,7 +17,7 @@ import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-SHARED_SRC = ROOT / "shared" / "src"
+MODEL_SRC = ROOT / "icesugar_pro" / "model" / "src"
 
 
 def parse_c_array(path: Path, name: str) -> list[int]:
@@ -70,11 +70,11 @@ def main() -> int:
     args = ap.parse_args()
     out_dir = Path(args.out)
 
-    font_8x16 = parse_c_array(SHARED_SRC / "font.c", "font_8x16")
-    font_16x32 = parse_c_array(SHARED_SRC / "font.c", "font_16x32")
-    sprites = parse_c_array(SHARED_SRC / "sprites.c", "sprite_rom")
-    pw = parse_c_array(SHARED_SRC / "palette.c", "palette_waterfall")
-    pa = parse_c_array(SHARED_SRC / "palette.c", "palette_goes")
+    font_8x16 = parse_c_array(MODEL_SRC / "font.c", "font_8x16")
+    font_16x32 = parse_c_array(MODEL_SRC / "font.c", "font_16x32")
+    sprites = parse_c_array(MODEL_SRC / "sprites.c", "sprite_rom")
+    pw = parse_c_array(MODEL_SRC / "palette.c", "palette_waterfall")
+    pa = parse_c_array(MODEL_SRC / "palette.c", "palette_goes")
 
     emit_mem(font_8x16,  8,  out_dir / "font_8x16.mem")
     emit_mem(font_16x32, 16, out_dir / "font_16x32.mem")

@@ -22,25 +22,36 @@ add_compile_options(
 )
 
 # ──────────────────────────────────────────────────────────────────────────────
-# shared/ — portable C library, built once, linked by host harness, tests,
-# and the Pico firmware. No malloc, no platform calls. The C is the executable
-# spec the iCESugar-Pro gateware will mimic.
+# shared/ — the Pico↔FPGA contract: UI state + wire protocol only. Portable C,
+# no malloc/stdio/platform calls. This is the entire dependency surface of the
+# Pico firmware; the Pico does no rendering.
 # ──────────────────────────────────────────────────────────────────────────────
 add_library(shared STATIC
     shared/src/ui_state.c
     shared/src/wire_protocol.c
-    shared/src/regions.c
-    shared/src/pixel_shader.c
-    shared/src/fb_compositor.c
-    shared/src/font.c
-    shared/src/sprites.c
-    shared/src/palette.c
-    shared/src/aux_roms.c
 )
 target_include_directories(shared PUBLIC shared/include)
 target_compile_definitions(shared PUBLIC
     UI_STATE_VERSION=1
 )
+
+# ──────────────────────────────────────────────────────────────────────────────
+# icesugar_pro/model/ — the C executable spec for the ECP5 renderer: pixel
+# shader, framebuffer compositor, region map, and the font/sprite/palette ROMs.
+# The SystemVerilog in icesugar_pro/src/ must reproduce this byte-for-byte. Built
+# by the host harness and tests; NOT linked into the Pico firmware.
+# ──────────────────────────────────────────────────────────────────────────────
+add_library(render_model STATIC
+    icesugar_pro/model/src/regions.c
+    icesugar_pro/model/src/pixel_shader.c
+    icesugar_pro/model/src/fb_compositor.c
+    icesugar_pro/model/src/font.c
+    icesugar_pro/model/src/sprites.c
+    icesugar_pro/model/src/palette.c
+    icesugar_pro/model/src/aux_roms.c
+)
+target_include_directories(render_model PUBLIC icesugar_pro/model/include)
+target_link_libraries(render_model PUBLIC shared)
 
 # ──────────────────────────────────────────────────────────────────────────────
 # host/ — SDL window, in-process Pico↔FPGA SPI link, synth data feed.
@@ -64,7 +75,7 @@ if(BUILD_HOST_HARNESS)
             host/include
             pico2w/include
         )
-        target_link_libraries(host_harness PRIVATE shared SDL2::SDL2 SDL2::SDL2main)
+        target_link_libraries(host_harness PRIVATE render_model SDL2::SDL2 SDL2::SDL2main)
         target_compile_definitions(host_harness PRIVATE TRIAD_HOST=1)
     else()
         message(STATUS "SDL2 not found — host_harness target disabled. Install with: brew install sdl2")

@@ -3,7 +3,6 @@
 #include <string.h>
 
 #include "hal_pico.h"
-#include "regions.h"
 #include "screen_config.h"
 #include "ui_state.h"
 #include "wire_protocol.h"
