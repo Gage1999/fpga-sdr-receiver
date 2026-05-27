@@ -2,9 +2,11 @@
 
 SystemVerilog for the iCESugar-Pro (ECP5-25K) — the screen/rendering subsystem.
 
-- `src/` — the SystemVerilog modules (empty for now); see
-  [../docs/fpga-sdr-receiver-architecture.md](../docs/fpga-sdr-receiver-architecture.md)
-  for the planned module breakdown and the SDRAM controller design.
+- `src/` — the SystemVerilog modules. The current FM bitstream is built:
+  SPI IQ ingest, `fft256` → `waterfall_buf`, FM demod → `i2s_tx`, and the LCD
+  driver (`top.sv`). See [../docs/fpga-sdr-receiver-interface.md](../docs/fpga-sdr-receiver-interface.md)
+  for the link/dataflow, and [../docs/fpga-sdr-receiver-architecture.md](../docs/fpga-sdr-receiver-architecture.md)
+  for the (not-yet-built) SDRAM-backed renderer the image modes need.
 - `model/` — the **C reference model**: `pixel_shader.c`, `fb_compositor.c`,
   `regions.c`, and the font/sprite/palette ROMs. This defines, bit-for-bit, what
   the SystemVerilog in `src/` must compute. It's portable C, built by the host
