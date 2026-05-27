@@ -19,6 +19,10 @@ struct fb {
 
 void fb_host_init(struct fb *fb, uint16_t fill);
 
+// Clear BOTH planes to `color`. Used on a layout (mode) change so regions
+// newly exposed in the new mode don't show stale pixels from the old one.
+void fb_host_clear(struct fb *fb, uint16_t color);
+
 // Read out the current FRONT buffer as a contiguous row-major array of pixels.
 // `dst` must hold SCREEN_W * SCREEN_H halfwords.
 void fb_host_snapshot_front(const struct fb *fb, uint16_t *dst);
