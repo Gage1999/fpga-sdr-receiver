@@ -48,3 +48,17 @@ Thumbs.db
 *.swp
 *.swo
 *~
+
+# C / CMake host harness (icesugar_pro spec, pico2w firmware, host/, tests/)
+build/
+build-*/
+.cache/
+compile_commands.json
+*.o
+*.obj
+*.a
+*.so
+*.dylib
+*.exe
+.vscode/
+.idea/
