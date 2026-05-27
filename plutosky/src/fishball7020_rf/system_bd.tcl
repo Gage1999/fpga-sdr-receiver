@@ -10,7 +10,7 @@
 #                        width fixed at 21 to preserve IOPLL init for USB HS clock
 #   - AXI Quad SPI on JP5 Bank 13 pins (Bank 13 pins no longer EMIO)
 #
-# AXI address map (matches tezuka device tree and maia_sdr.ko):
+# AXI address map:
 #   0x79020000  axi_ad9361
 #   0x7C400000  axi_ad9361_adc_dma
 #   0x7C420000  axi_ad9361_dac_dma
@@ -108,7 +108,7 @@ ad_ip_parameter sys_ps7 CONFIG.PCW_FPGA1_PERIPHERAL_FREQMHZ 200.0
 
 # EMIO GPIO, 21 bits - must stay at 21 to preserve IOPLL init sequence for USB HS
 ad_ip_parameter sys_ps7 CONFIG.PCW_GPIO_EMIO_GPIO_ENABLE 1
-ad_ip_parameter sys_ps7 CONFIG.PCW_GPIO_EMIO_GPIO_IO     21
+ad_ip_parameter sys_ps7 CONFIG.PCW_GPIO_EMIO_GPIO_IO     17
 ad_ip_parameter sys_ps7 CONFIG.PCW_GPIO_MIO_GPIO_ENABLE  1
 ad_ip_parameter sys_ps7 CONFIG.PCW_GPIO_MIO_GPIO_IO      MIO
 
@@ -558,11 +558,30 @@ ad_connect muxcs8_tx_q2/data_out     axi_ad9361/dac_data_q1
 ad_connect muxcs8_tx_q2/enable_out   tx_upack/enable_3
 
 # ---------------------------------------------------------------------------
+# AXI Quad SPI - JP5 master (iCeSugar Pro SPI slave)
+# SCK = ext_spi_clk / C_SCK_RATIO = 100 MHz / 2 = 50 MHz max
+# ---------------------------------------------------------------------------
+
+create_bd_cell -type ip -vlnv xilinx.com:ip:axi_quad_spi:3.2 axi_spi1
+set_property -dict [list \
+    CONFIG.C_USE_STARTUP {0} \
+    CONFIG.C_NUM_SS_BITS {1} \
+    CONFIG.C_SCK_RATIO   {2}] [get_bd_cells axi_spi1]
+
+ad_connect sys_cpu_clk    axi_spi1/ext_spi_clk
+ad_connect sys_cpu_clk    axi_spi1/s_axi_aclk
+ad_connect sys_cpu_resetn axi_spi1/s_axi_aresetn
+
+ad_connect spi1_csn_o  axi_spi1/ss_o
+ad_connect spi1_clk_o  axi_spi1/sck_o
+ad_connect spi1_mosi_o axi_spi1/io0_o
+ad_connect spi1_miso_i axi_spi1/io1_i
+
+# ---------------------------------------------------------------------------
 # AXI interconnects
 # ---------------------------------------------------------------------------
 
 ad_cpu_interconnect 0x79020000 axi_ad9361
-ad_cpu_interconnect 0x7C460000 maia_sdr
 ad_cpu_interconnect 0x7C400000 axi_ad9361_adc_dma
 ad_cpu_interconnect 0x7C420000 axi_ad9361_dac_dma
 ad_cpu_interconnect 0x7C440000 axi_spi_jp5

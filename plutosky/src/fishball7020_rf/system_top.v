@@ -1,4 +1,3 @@
-// ***************************************************************************
 // fishball7020_rf/system_top.v
 //
 // Top-level for fishball7020 (PlutoSky 7020, XC7Z020-2CLG400I).
@@ -164,6 +163,10 @@ module system_top (
     .tx_frame_out_p     (tx_frame_out_p),
     .txnrx              (txnrx),
     .up_enable          (gpio_o[15]),
-    .up_txnrx           (gpio_o[16]));
+    .up_txnrx           (gpio_o[16]),
+    .spi1_csn_o         (spi1_csn),
+    .spi1_clk_o         (spi1_clk),
+    .spi1_mosi_o        (spi1_mosi),
+    .spi1_miso_i        (spi1_miso));
 
 endmodule
