@@ -11,7 +11,7 @@ Read this first before reading the build guide.
 2. [Signal Chain](#2-signal-chain)
 3. [Boot Chain](#3-boot-chain)
 4. [FPGA Block Design](#4-fpga-block-design)
-5. [EMIO GPIO Mapping](#5-emio-gpio-mapping)
+5. [JP5 AXI SPI Link](#5-jp5-axi-spi-link)
 6. [AXI Address Map](#6-axi-address-map)
 7. [Design Decisions](#7-design-decisions)
 
@@ -32,7 +32,7 @@ Read this first before reading the build guide.
 | Flash | QSPI on MIO 1–6, JFFS2 filesystem on mtd2 |
 | Storage | MicroSD card, FAT partition at /boot |
 | USB | USB 2.0 OTG, reset on MIO 46, gadget IP 192.168.2.1 |
-| Expansion | JP5 connector, 4× GPIO, power rails (5V, 3.3V, 1.8V), GND |
+| Expansion | JP5 connector, AXI SPI signals, power rails (5V, 3.3V, 1.8V), GND |
 
 **Important CLG400 differences from the stock ADI reference design** (`adrv9364z7020/ccbob_lvds`,
 which targets the `fbg676` package on a carrier board):
@@ -92,23 +92,22 @@ maia_sdr.ko driver → /dev/maia-sdr-spectrometer
 maia-httpd (web server) → browser waterfall display
 ```
 
-### GPIO path (our addition)
+### JP5 SPI path to iCeSugar Pro
 
 ```
-Linux userspace (gpioset / Python)
-  │  /dev/gpiochip0 lines 71-74
+Linux userspace (`icesugar_stream`, `test_icesugar`)
+  │  /dev/mem mmap of AXI SPI registers at 0x7C440000
   ▼
-Zynq PS7 EMIO GPIO bank 2 (EMIO[17:20])
-  │  gpio_o[17:20] → IOBUF.I
-  │  gpio_t[17:20] → IOBUF.T (tristate control)
+AXI Quad SPI (`axi_spi_jp5`)
+  │  8-bit SPI transfers, Mode 3, manual CS
   ▼
-IOBUF primitives in PL (Bank 13, LVCMOS33)
-  │  Physical pads: V10, U9, U10, T9
+JP5 pins, Bank 13 LVCMOS33
+  │  SCK, MOSI, CS; MISO present but unused by current IQ stream
   ▼
-JP5 connector pins 7, 9, 11, 13
+iCeSugar Pro CS0 SPI receiver
   │
   ▼
-(future) iCESugar Pro ECP5 → SPI/parallel → LCD display
+FFT/waterfall and FM demod/audio
 ```
 
 ---
@@ -163,8 +162,9 @@ with adaptations for the fishball7020's LVDS RF interface and CLG400 PS7 configu
 
 | Instance | IP | Description |
 |---|---|---|
-| `sys_ps7` | processing_system7 | Zynq PS7: ARM cores, DDR, MIO, EMIO GPIO |
+| `sys_ps7` | processing_system7 | Zynq PS7: ARM cores, DDR, MIO, control pins |
 | `axi_ad9361` | axi_ad9361 (ADI) | AD9361/AD9363 LVDS data interface + register map |
+| `axi_spi_jp5` | axi_quad_spi | JP5 SPI master for iCeSugar IQ/display stream |
 | `maia_sdr` | maia_sdr_maia_iio | Spectrometer, recorder, IQ correction (maia-hdl) |
 | `axi_ad9361_adc_dma` | axi_dmac (ADI) | ADC → DDR3 DMA (HP2 slave) |
 | `axi_ad9361_dac_dma` | axi_dmac (ADI) | DDR3 → DAC DMA (HP2 slave) |
@@ -185,47 +185,53 @@ with adaptations for the fishball7020's LVDS RF interface and CLG400 PS7 configu
 
 ### What `system_top.v` adds on top of the BD wrapper
 
-The Vivado-generated `system_wrapper` exposes `gpio_i/o/t[20:0]` as ports.
+The Vivado-generated `system_wrapper` exposes AD9363 control pins and JP5 SPI
+ports. `system_top.v` connects those ports to the board pins.
 `system_top.v` adds:
 
-1. **AD9363 GPIO IOBUF**, `ad_iobuf` for EMIO[13:0] (gpio_status, gpio_ctl, en_agc, resetb)
-2. **Loopback for EMIO[16:14]**, `up_enable` and `up_txnrx` drive axi_ad9361 directly; bits [14] are unused
-3. **Bank 13 IOBUFs**, Four individual `IOBUF` primitives for EMIO[17:20] → io_3v3_0..3 → JP5
+1. **AD9363 control IOBUF**, `ad_iobuf` for status/control/en_agc/resetb pins
+2. **Loopback for internal control**, `up_enable` and `up_txnrx` drive axi_ad9361 directly
+3. **JP5 SPI outputs**, SCK/MOSI/CS from `axi_spi_jp5` routed to Bank 13 pins
 
 ---
 
-## 5. EMIO GPIO Mapping
+## 5. JP5 AXI SPI Link
 
-Zynq PS GPIO has three banks:
-- **Bank 0**: MIO 0–31 (PS pins)
-- **Bank 1**: MIO 32–53 (PS pins)
-- **Bank 2**: EMIO 0–31 → `gpiochip0` lines 54–85
-- **Bank 3**: EMIO 32–63 → `gpiochip0` lines 86–117
+The current PlutoSky bitstream instantiates `axi_quad_spi` as `axi_spi_jp5` and
+maps it into the CPU AXI address space.
 
-Our design uses 21 EMIO bits:
+AXI SPI configuration:
 
-| EMIO bit | gpiochip0 line | Signal | Direction | Note |
-|---|---|---|---|---|
-| 0–7 | 54–61 | gpio_status[7:0] | Input | AD9363 CTRL_OUT[7:0] |
-| 8–11 | 62–65 | gpio_ctl[3:0] | Output | AD9363 CTRL_IN[3:0] |
-| 12 | 66 | gpio_en_agc | Output | AD9363 EN_AGC |
-| 13 | 67 | gpio_resetb | Output | AD9363 RESET_B |
-| 14 | 68 | (unused) | Loopback |   |
-| 15 | 69 | up_enable | Output | axi_ad9361 TX enable |
-| 16 | 70 | up_txnrx | Output | axi_ad9361 TX/RX select |
-| 17 | 71 | io_3v3_0 | Bidirectional | JP5 pin 7, FPGA ball V10 |
-| 18 | 72 | io_3v3_1 | Bidirectional | JP5 pin 9, FPGA ball U9 |
-| 19 | 73 | io_3v3_2 | Bidirectional | JP5 pin 11, FPGA ball U10 |
-| 20 | 74 | io_3v3_3 | Bidirectional | JP5 pin 13, FPGA ball T9 |
+| Parameter | Value |
+|---|---|
+| IP | Xilinx AXI Quad SPI |
+| Instance | `axi_spi_jp5` |
+| Base address | `0x7C440000` |
+| AXI clock | 100 MHz |
+| SCK ratio | 8 |
+| SCK rate | about 12.5 MHz |
+| SPI mode | Mode 3, CPOL=1, CPHA=1 |
+| Transfer width | 8 bits |
+| Slave selects | 1 |
 
-**Driving the JP5 pins from Linux:**
-```bash
-# Drive all HIGH (+3.3V)
-gpioset gpiochip0 71=1 72=1 73=1 74=1
+Current JP5 pin use:
 
-# Drive all LOW (0V)
-gpioset gpiochip0 71=0 72=0 73=0 74=0
+| JP5 pin | FPGA ball | SPI signal | Direction |
+|---|---|---|---|
+| 7 | V10 | SCK | PlutoSky to iCeSugar |
+| 9 | U9 | MOSI | PlutoSky to iCeSugar |
+| 13 | T9 | CS | PlutoSky to iCeSugar |
+| 11 | U10 | MISO | iCeSugar to PlutoSky, unused for current IQ stream |
+
+The current userspace code sends one IQ sample as four MSB-first bytes:
+
+```text
+[I15..I0][Q15..Q0]
 ```
+
+`plutosky/tests/test_spi_reg.c` verifies the AXI SPI register block.
+`plutosky/tests/test_icesugar.c` and `plutosky/src/icesugar_stream.c` use the
+controller to send synthetic or live IQ to the iCeSugar Pro.
 
 ---
 
@@ -239,8 +245,8 @@ These addresses must match the tezuka device tree (`devicetree.dtb`) and the
 | `axi_ad9361` | 0x79020000 | 64 KB | AXI GP0 (CPU) |
 | `axi_ad9361_adc_dma` | 0x7C400000 | 64 KB | AXI GP0 (CPU) |
 | `axi_ad9361_dac_dma` | 0x7C420000 | 64 KB | AXI GP0 (CPU) |
+| `axi_spi_jp5` | 0x7C440000 | 64 KB | AXI GP0 (CPU) |
 | `maia_sdr` | 0x7C460000 | 64 KB | AXI GP0 (CPU) |
 | `maia_sdr` spectrometer DMA |   | 512 MB | AXI HP1 (DMA master) |
 | ADC/DAC DMAs |   | 512 MB | AXI HP2 (DMA master) |
 | `maia_sdr` recorder DMA |   | 512 MB | AXI HP2 (DMA master) |
-

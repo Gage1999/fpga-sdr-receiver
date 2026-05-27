@@ -8,7 +8,7 @@ SCP     = scp -O
 TEST_SRC = tests/test_icesugar.c
 TEST_BIN = build/test_icesugar
 
-TEST     ?= full   # null | full | tone | sweep | noise | fm | slowfull | slowtone
+TEST     ?= full   # null | full | tone | longtone | sine | sweep | noise | fm | slowfull | slowtone
 
 SPI_REG_SRC = tests/test_spi_reg.c
 SPI_REG_BIN = build/test_spi_reg

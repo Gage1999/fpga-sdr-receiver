@@ -25,8 +25,8 @@ NOAA APT.)
 
 | Directory | Device | Role | Status |
 |---|---|---|---|
-| [`plutosky/`](plutosky/) | PlutoSky 7020 (XC7Z020, AD9363) | RF front end | GPIO verified, RF active |
-| [`icesugar_pro/`](icesugar_pro/) | iCESugar-Pro (ECP5-25K) | display / rendering gateware | spec'd in C; SV in development |
+| [`plutosky/`](plutosky/) | PlutoSky 7020 (XC7Z020, AD9363) | RF front end + JP5 AXI SPI source | AXI SPI verified, RF active |
+| [`icesugar_pro/`](icesugar_pro/) | iCESugar-Pro (ECP5-25K) | display / rendering gateware | SV waterfall/FM/I2S bring-up active |
 | [`pico2w/`](pico2w/) | Raspberry Pi Pico 2W (RP2350) | touch UI firmware | portable C done; bring-up pending |
 
 ---
@@ -83,12 +83,17 @@ access and deploy the board scripts.
 
 Once flashed and booted:
 
-```bash
+```powershell
 # Configure ~/.ssh/config first; see plutosky/docs/ssh_setup.md
 ssh pluto-usb
+```
 
-# Drive all four JP5 GPIO pins HIGH
-gpioset gpiochip0 71=1 72=1 73=1 74=1
+From the repo root on the development machine:
+
+```powershell
+# Verify the JP5 AXI SPI register block
+cd plutosky
+make spi-reg-run
 ```
 
 To rebuild from source, see [`plutosky/docs/build_guide.md`](plutosky/docs/build_guide.md).
@@ -144,7 +149,7 @@ pico2w/
 | RF IC | AD9363 (AD9361-compatible, LVDS 6-lane) |
 | Base firmware | maia-sdr (tezuka build) |
 | USB device IP | 192.168.2.1 |
-| JP5 GPIO | gpiochip0 lines 71-74 (EMIO[17:20], Bank 13, 3.3V) |
+| JP5 data link | AXI Quad SPI at 0x7C440000, about 12.5 MHz SCK |
 | Display FPGA | Lattice ECP5-25K (iCESugar-Pro) + 32 MB SDRAM |
 | LCD | 4.3" 800×480 RGB-parallel, 60 Hz, RGB565 |
 | Touch | Goodix capacitive (model TBD; GT911 family likely) over I²C on the Pico |
@@ -159,7 +164,7 @@ pico2w/
 | [`docs/fpga-sdr-receiver-architecture.md`](docs/fpga-sdr-receiver-architecture.md) | ECP5 data path, SDRAM arbiter, EBR map, display timing |
 | [`docs/fpga-sdr-receiver-harness.md`](docs/fpga-sdr-receiver-harness.md) | Host harness design, portability contract, wire protocol |
 | [`icesugar_pro/README.md`](icesugar_pro/README.md) | Gateware bring-up order, ROM generation, SDRAM notes |
-| [`plutosky/docs/architecture.md`](plutosky/docs/architecture.md) | RF hardware, boot chain, FPGA design, AXI/EMIO maps |
+| [`plutosky/docs/architecture.md`](plutosky/docs/architecture.md) | RF hardware, boot chain, FPGA design, AXI SPI map |
 | [`plutosky/docs/build_guide.md`](plutosky/docs/build_guide.md) | Rebuild bitstream and BOOT.BIN from source |
 | [`plutosky/docs/ssh_setup.md`](plutosky/docs/ssh_setup.md) | SSH key setup on a fresh board |
 

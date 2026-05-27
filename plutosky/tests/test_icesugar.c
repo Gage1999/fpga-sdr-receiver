@@ -2,7 +2,7 @@
  * IQ injection test for the iCeSugar Pro.
  * Runs on the PlutoSky Linux filesystem - no Python required.
  *
- * Usage: ./test_icesugar [null|full|tone|longtone|sweep|noise|fm|slowfull|slowtone]
+ * Usage: ./test_icesugar [null|full|tone|longtone|sine|sweep|noise|fm|slowfull|slowtone]
  */
 
 #include <fcntl.h>
@@ -112,6 +112,30 @@ static void run_longtone(void)
             int16_t i_val = (int16_t)(32767.0 * cos(omega * k));
             int16_t q_val = (int16_t)(32767.0 * sin(omega * k));
             send_iq_word(i_val, q_val);
+        }
+    }
+}
+
+static void run_sine(void)
+{
+    const int points = 240;
+    const int hold_frames = 24;
+    const double center_bin = 64.0;
+    const double span_bins = 40.0;
+    const double amp = 24000.0;
+
+    puts("Test: sine - held integer-bin tone draws a sine path on the waterfall");
+    for (int p = 0; p < points; p++) {
+        double t = (double)p / (double)points;
+        int bin = (int)(center_bin + span_bins * sin(2.0 * M_PI * t) + 0.5);
+        double omega = 2.0 * M_PI * (double)bin / 256.0;
+
+        for (int frame = 0; frame < hold_frames; frame++) {
+            for (int k = 0; k < 256; k++) {
+                int16_t i_val = (int16_t)(amp * cos(omega * k));
+                int16_t q_val = (int16_t)(amp * sin(omega * k));
+                send_iq_word(i_val, q_val);
+            }
         }
     }
 }
@@ -230,12 +254,13 @@ int main(int argc, char *argv[])
     else if (strcmp(test, "full") == 0) run_full();
     else if (strcmp(test, "tone") == 0) run_tone();
     else if (strcmp(test, "longtone") == 0) run_longtone();
+    else if (strcmp(test, "sine") == 0) run_sine();
     else if (strcmp(test, "sweep") == 0) run_sweep();
     else if (strcmp(test, "noise") == 0) run_noise();
     else if (strcmp(test, "fm") == 0) run_fm();
     else if (strcmp(test, "slowfull") == 0) run_slowfull();
     else if (strcmp(test, "slowtone") == 0) run_slowtone();
-    else { fprintf(stderr, "unknown test: %s (use null|full|tone|longtone|sweep|noise|fm|slowfull|slowtone)\n", test); }
+    else { fprintf(stderr, "unknown test: %s (use null|full|tone|longtone|sine|sweep|noise|fm|slowfull|slowtone)\n", test); }
 
     puts("Done.");
     munmap((void *)spi, SPI_RANGE);

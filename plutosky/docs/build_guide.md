@@ -398,13 +398,16 @@ Then try PlutoSky live FM mode:
 
 ```powershell
 cd ..\plutosky
-make stream-run STREAM_ARGS="--mode fm --freq-mhz 95.1 --adc-rate 0 --rate 349000 --duration 20 --chunk-samples 65536"
+make stream-run STREAM_ARGS="--mode fm --freq-mhz 95.1 --adc-rate 0 --rate 349000 --duration 30 --chunk-samples 65536 --iq-shift 3 --dc-shift 12"
 ```
 
 Notes:
 
 - Change `--freq-mhz` to a strong local FM station.
 - `--adc-rate 0` lets the app try its fallback AD9363 sample rates.
+- `--iq-shift` controls live IQ gain before SPI. Try `2` if audio sounds clipped.
+- `--dc-shift` controls IQ DC removal. Add `--no-dc-block` if you need to compare
+  against the raw IIO samples.
 - The final printed `samples/s` matters. It should be near the requested output
   rate for the current `prog_fm_spi8` test.
 - This is still a development path, not a final hardware-paced streamer.

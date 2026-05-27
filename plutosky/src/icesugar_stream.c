@@ -62,10 +62,13 @@ struct stream_cfg {
     unsigned duration_sec;
     unsigned synth_amp;
     unsigned synth_dev_hz;
+    unsigned iq_shift;
+    unsigned dc_shift;
     unsigned word_delay_us;
     int dry_run;
     int synth_source;
     int per_word_cs;
+    int dc_block;
 };
 
 static volatile uint32_t *spi;
@@ -270,9 +273,13 @@ static FILE *open_iio_readdev(const struct stream_cfg *cfg, unsigned actual_rate
     return popen(cmd, "r");
 }
 
-static int16_t widen_iio_sample(int16_t x)
+static int16_t scale_iio_sample(int32_t x, unsigned shift)
 {
-    int32_t y = ((int32_t)x) << 4;
+    int32_t y = x;
+
+    if (shift > 15)
+        shift = 15;
+    y <<= shift;
 
     if (y > 32767)
         y = 32767;
@@ -291,6 +298,8 @@ static int stream_iq(FILE *src, const struct stream_cfg *cfg, unsigned actual_ra
     unsigned phase = 0;
     unsigned out_rate = cfg->sample_rate;
     unsigned in_rate = actual_rate;
+    int32_t dc_i = 0;
+    int32_t dc_q = 0;
     struct timeval t0, t1;
 
     buf = malloc(words_per_chunk * sizeof(int16_t));
@@ -300,6 +309,10 @@ static int stream_iq(FILE *src, const struct stream_cfg *cfg, unsigned actual_ra
     }
 
     gettimeofday(&t0, NULL);
+
+    printf("Live stream: output_rate=%u Hz, chunk=%u, iq_shift=%u, dc_block=%s\n",
+           out_rate ? out_rate : in_rate, cfg->chunk_samples, cfg->iq_shift,
+           cfg->dc_block ? "on" : "off");
 
     while (keep_running) {
         size_t got = fread(buf, sizeof(int16_t), words_per_chunk, src);
@@ -311,11 +324,23 @@ static int stream_iq(FILE *src, const struct stream_cfg *cfg, unsigned actual_ra
             spi_select();
 
         for (size_t n = 0; n < got; n += 2) {
-            int16_t i_val = widen_iio_sample(buf[n]);
-            int16_t q_val = widen_iio_sample(buf[n + 1]);
+            int32_t raw_i = buf[n];
+            int32_t raw_q = buf[n + 1];
+            int16_t i_val;
+            int16_t q_val;
             int send_sample = 1;
 
             input_total++;
+
+            if (cfg->dc_block) {
+                dc_i += (raw_i - dc_i) >> cfg->dc_shift;
+                dc_q += (raw_q - dc_q) >> cfg->dc_shift;
+                raw_i -= dc_i;
+                raw_q -= dc_q;
+            }
+
+            i_val = scale_iio_sample(raw_i, cfg->iq_shift);
+            q_val = scale_iio_sample(raw_q, cfg->iq_shift);
 
             if (out_rate != 0 && in_rate != 0 && out_rate < in_rate) {
                 phase += out_rate;
@@ -497,6 +522,9 @@ static void usage(const char *prog)
     printf("  --duration SEC         Run length; 0 means until Ctrl-C (default 0)\n");
     printf("  --iio-buf N            iio_readdev buffer size (default 8192)\n");
     printf("  --chunk-samples N      SPI CS chunk size in IQ samples (default 1024)\n");
+    printf("  --iq-shift N           Live IQ left shift before SPI (default 4)\n");
+    printf("  --dc-shift N           Live IQ DC block shift (default 12)\n");
+    printf("  --no-dc-block          Disable live IQ DC blocking\n");
     printf("  --synth-amp N          Synthetic IQ amplitude (default 30000)\n");
     printf("  --synth-dev HZ         Synthetic FM deviation (default 50000)\n");
     printf("  --per-word-cs          Toggle CS around each IQ word\n");
@@ -516,9 +544,12 @@ static int parse_args(int argc, char **argv, struct stream_cfg *cfg)
     cfg->duration_sec = 0;
     cfg->synth_amp = 30000;
     cfg->synth_dev_hz = 50000;
+    cfg->iq_shift = 4;
+    cfg->dc_shift = 12;
     cfg->word_delay_us = 0;
     cfg->dry_run = 0;
     cfg->per_word_cs = 0;
+    cfg->dc_block = 1;
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--mode") == 0 && i + 1 < argc) {
@@ -547,6 +578,12 @@ static int parse_args(int argc, char **argv, struct stream_cfg *cfg)
             cfg->iio_buf = (unsigned)strtoul(argv[++i], NULL, 0);
         } else if (strcmp(argv[i], "--chunk-samples") == 0 && i + 1 < argc) {
             cfg->chunk_samples = (unsigned)strtoul(argv[++i], NULL, 0);
+        } else if (strcmp(argv[i], "--iq-shift") == 0 && i + 1 < argc) {
+            cfg->iq_shift = (unsigned)strtoul(argv[++i], NULL, 0);
+        } else if (strcmp(argv[i], "--dc-shift") == 0 && i + 1 < argc) {
+            cfg->dc_shift = (unsigned)strtoul(argv[++i], NULL, 0);
+        } else if (strcmp(argv[i], "--no-dc-block") == 0) {
+            cfg->dc_block = 0;
         } else if (strcmp(argv[i], "--synth-amp") == 0 && i + 1 < argc) {
             cfg->synth_amp = (unsigned)strtoul(argv[++i], NULL, 0);
         } else if (strcmp(argv[i], "--synth-dev") == 0 && i + 1 < argc) {
@@ -574,6 +611,10 @@ static int parse_args(int argc, char **argv, struct stream_cfg *cfg)
         cfg->synth_amp = 32767;
     if (cfg->synth_dev_hz == 0)
         cfg->synth_dev_hz = 1;
+    if (cfg->dc_shift == 0)
+        cfg->dc_shift = 1;
+    if (cfg->dc_shift > 20)
+        cfg->dc_shift = 20;
 
     return 0;
 }
