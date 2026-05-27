@@ -51,3 +51,8 @@ Thumbs.db
 icesugar-pro/
 plutosky/build/
 icesugar_pro/build/
+
+# Top-level CMake/ninja build tree for the host harness
+/build/
+# Generated mem-init asset (derived from riverside_ucr.bin); too large to track
+icesugar_pro/model/assets/*.mem
