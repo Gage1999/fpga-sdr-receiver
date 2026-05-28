@@ -82,6 +82,8 @@ module pixel_shader (
     localparam logic [2:0] BTN_VOL_DN   = 3'd3;
     localparam logic [2:0] BTN_MODE     = 3'd4;
     localparam logic [2:0] BTN_MUTE     = 3'd5;
+    localparam logic [2:0] BTN_ZOOM_IN  = 3'd6;
+    localparam logic [2:0] BTN_ZOOM_OUT = 3'd7;
 
     // sprite IDs (sprites.h)
     localparam logic [7:0] SPR_BTN_FREQ_UP = 8'd0;
@@ -95,6 +97,7 @@ module pixel_shader (
 
     // status bar colors
     localparam logic [15:0] STATUS_BG     = 16'h10C4;  // RGB565(20,24,32)
+    localparam logic [15:0] IMG_BG        = 16'h0883;  // RGB565(12,18,24) — image-mode button bg
     localparam logic [15:0] STATUS_FG     = 16'hDF5F;  // RGB565(220,235,255)
     localparam logic [15:0] STATUS_ACCENT = 16'h55FF;  // RGB565(80,190,255)
     localparam logic [15:0] STATUS_DIM    = 16'hA67C;  // RGB565(165,205,225)
@@ -196,6 +199,68 @@ module pixel_shader (
         end
     end
 
+    // Image-layout floating buttons (GOES_FULL: MODE only; ADSB_FULL: MODE +
+    // ZOOM_IN + ZOOM_OUT). Same x0 slots as spectrum buttons, drawn over the
+    // FB instead of inside the status bar.
+    logic       in_img_layout;
+    logic       in_img_button;
+    logic [2:0] img_btn_id;
+    logic [9:0] img_btn_x0;
+
+    assign in_img_layout = (layout == LAYOUT_GOES_FULL)
+                        || (layout == LAYOUT_ADSB_FULL);
+
+    always_comb begin
+        in_img_button = 1'b0;
+        img_btn_id    = 3'd0;
+        img_btn_x0    = 10'd0;
+        if (in_img_layout && y >= 10'd8 && y < 10'd56) begin
+            // MODE: visible in both image layouts (slot 0 → x0 = 746)
+            if (x >= 10'd746 && x < 10'd794) begin
+                in_img_button = 1'b1;
+                img_btn_id    = BTN_MODE;
+                img_btn_x0    = 10'd746;
+            end
+            // ZOOM_IN / ZOOM_OUT: ADSB only (slot 1 = 692, slot 2 = 638)
+            else if (layout == LAYOUT_ADSB_FULL) begin
+                if (x >= 10'd692 && x < 10'd740) begin
+                    in_img_button = 1'b1;
+                    img_btn_id    = BTN_ZOOM_IN;
+                    img_btn_x0    = 10'd692;
+                end else if (x >= 10'd638 && x < 10'd686) begin
+                    in_img_button = 1'b1;
+                    img_btn_id    = BTN_ZOOM_OUT;
+                    img_btn_x0    = 10'd638;
+                end
+            end
+        end
+    end
+
+    // Unify status-layout and image-layout button hits into one "active button"
+    // so the existing draw-logic (local coords, frame, glyph_bit, sprite) works
+    // for both. Mutually exclusive by layout, so no collision priority needed.
+    logic        any_btn;
+    logic [2:0]  any_btn_id;
+    logic [9:0]  any_btn_x0;
+    logic [15:0] any_btn_bg;
+    logic        any_btn_is_text;
+
+    always_comb begin
+        if (in_img_button) begin
+            any_btn         = 1'b1;
+            any_btn_id      = img_btn_id;
+            any_btn_x0      = img_btn_x0;
+            any_btn_bg      = IMG_BG;
+            any_btn_is_text = 1'b1;            // image buttons are all text
+        end else begin
+            any_btn         = in_button;
+            any_btn_id      = hit_btn_id;
+            any_btn_x0      = hit_btn_x0;
+            any_btn_bg      = STATUS_BG;
+            any_btn_is_text = (hit_btn_id == BTN_MODE);
+        end
+    end
+
     // Volume bar pixel.
     logic [15:0] vol_pixel;
     logic [9:0] vol_local_x;
@@ -215,20 +280,28 @@ module pixel_shader (
     // Text path selection: which of {freq, rds, demod_label, button-text}.
     // Only one is active at a given pixel.
     typedef enum logic [2:0] {
-        TXT_NONE     = 3'd0,
-        TXT_FREQ     = 3'd1,
-        TXT_RDS      = 3'd2,
-        TXT_DEMOD    = 3'd3,
-        TXT_MODE_BTN = 3'd4
+        TXT_NONE      = 3'd0,
+        TXT_FREQ      = 3'd1,
+        TXT_RDS       = 3'd2,
+        TXT_DEMOD     = 3'd3,
+        TXT_MODE_BTN  = 3'd4,
+        TXT_IMG_MODE  = 3'd5,
+        TXT_IMG_PLUS  = 3'd6,
+        TXT_IMG_MINUS = 3'd7
     } text_path_t;
 
     text_path_t text_path;
     always_comb begin
-        if      (in_freq_text)                            text_path = TXT_FREQ;
-        else if (in_rds_text)                             text_path = TXT_RDS;
-        else if (in_demod_label)                          text_path = TXT_DEMOD;
-        else if (in_button && hit_btn_id == BTN_MODE)     text_path = TXT_MODE_BTN;
-        else                                              text_path = TXT_NONE;
+        // Image-button text paths first: they're in image layouts where the
+        // status-region text paths can't fire anyway (region != STATUS).
+        if      (in_img_button && img_btn_id == BTN_MODE)     text_path = TXT_IMG_MODE;
+        else if (in_img_button && img_btn_id == BTN_ZOOM_IN)  text_path = TXT_IMG_PLUS;
+        else if (in_img_button && img_btn_id == BTN_ZOOM_OUT) text_path = TXT_IMG_MINUS;
+        else if (in_freq_text)                                text_path = TXT_FREQ;
+        else if (in_rds_text)                                 text_path = TXT_RDS;
+        else if (in_demod_label)                              text_path = TXT_DEMOD;
+        else if (in_button && hit_btn_id == BTN_MODE)         text_path = TXT_MODE_BTN;
+        else                                                  text_path = TXT_NONE;
     end
 
     // For status-bar text regions: lx-x0 → ch_idx and gx; ly-y0 → gy.
@@ -268,13 +341,26 @@ module pixel_shader (
     // For button text (MODE only in spectrum-only): rel_x = local_x - text_x.
     logic [9:0] btn_local_x;
     logic [9:0] btn_local_y;
-    assign btn_local_x = lx_st - hit_btn_x0;
+    assign btn_local_x = lx_st - any_btn_x0;
     assign btn_local_y = ly_st - 10'd8;
+
+    logic signed [15:0] btn_local_x_s;
+    logic signed [15:0] btn_local_y_s;
+    assign btn_local_x_s = $signed({6'b0, btn_local_x});
+    assign btn_local_y_s = $signed({6'b0, btn_local_y});
 
     logic signed [15:0] mode_rel_x;
     logic signed [15:0] mode_rel_y;
-    assign mode_rel_x = $signed({6'b0, btn_local_x}) - mode_btn_text_x;
-    assign mode_rel_y = $signed({6'b0, btn_local_y}) - mode_btn_text_y;
+    logic signed [15:0] plus_rel_x;
+    logic signed [15:0] plus_rel_y;
+    logic signed [15:0] minus_rel_x;
+    logic signed [15:0] minus_rel_y;
+    assign mode_rel_x  = btn_local_x_s - mode_btn_text_x;
+    assign mode_rel_y  = btn_local_y_s - mode_btn_text_y;
+    assign plus_rel_x  = btn_local_x_s - plus_text_x;
+    assign plus_rel_y  = btn_local_y_s - plus_text_y;
+    assign minus_rel_x = btn_local_x_s - minus_text_x;
+    assign minus_rel_y = btn_local_y_s - minus_text_y;
 
     // Text-path char selection
     logic [7:0] text_char;
@@ -306,13 +392,32 @@ module pixel_shader (
                 text_gy_sel    = demod_gy;
                 text_in_bounds = 1'b1;
             end
-            TXT_MODE_BTN: begin
+            TXT_MODE_BTN, TXT_IMG_MODE: begin
                 // Two-char label: ch_idx = (rel_x >> 4) & 1; gx = rel_x & 0xF.
                 if (mode_rel_x >= 0 && mode_rel_x < 16'sd32
                     && mode_rel_y >= 0 && mode_rel_y < 16'sd32) begin
                     text_char      = mode_btn_label[mode_rel_x[4]*8 +: 8];
                     text_gx_sel    = mode_rel_x[3:0];
                     text_gy_sel    = mode_rel_y[4:0];
+                    text_in_bounds = 1'b1;
+                end
+            end
+            TXT_IMG_PLUS: begin
+                // One-char "+" label.
+                if (plus_rel_x >= 0 && plus_rel_x < 16'sd16
+                    && plus_rel_y >= 0 && plus_rel_y < 16'sd32) begin
+                    text_char      = 8'h2B;  // '+'
+                    text_gx_sel    = plus_rel_x[3:0];
+                    text_gy_sel    = plus_rel_y[4:0];
+                    text_in_bounds = 1'b1;
+                end
+            end
+            TXT_IMG_MINUS: begin
+                if (minus_rel_x >= 0 && minus_rel_x < 16'sd16
+                    && minus_rel_y >= 0 && minus_rel_y < 16'sd32) begin
+                    text_char      = 8'h2D;  // '-'
+                    text_gx_sel    = minus_rel_x[3:0];
+                    text_gy_sel    = minus_rel_y[4:0];
                     text_in_bounds = 1'b1;
                 end
             end
@@ -349,7 +454,7 @@ module pixel_shader (
     // 6 main buttons but matches C default).
     logic [7:0] sprite_id_sel;
     always_comb begin
-        unique case (hit_btn_id)
+        unique case (any_btn_id)
             BTN_FREQ_UP: sprite_id_sel = SPR_BTN_FREQ_UP;
             BTN_FREQ_DN: sprite_id_sel = SPR_BTN_FREQ_DN;
             BTN_VOL_UP:  sprite_id_sel = SPR_BTN_VOL_UP;
@@ -383,13 +488,10 @@ module pixel_shader (
 
     // Button render: text path (MODE) or sprite path (FREQ/VOL/MUTE).
     // Edge / inner border first, then label or sprite overlay.
-    logic btn_is_text;
-    assign btn_is_text = (hit_btn_id == BTN_MODE);  // ZOOM not in spec-only.
-
     logic [15:0] btn_text_base;   // before active highlight
     logic [15:0] btn_pixel;
     logic        btn_active;
-    assign btn_active = (active_button[2:0] == hit_btn_id)
+    assign btn_active = (active_button[2:0] == any_btn_id)
                         && (active_button[7:3] == 5'b0);
 
     always_comb begin
@@ -405,15 +507,15 @@ module pixel_shader (
         end
         if (glyph_bit) btn_text_base = TB_FG;
 
-        if (btn_is_text) begin
-            // active: brighten by 48 unless px == bg (the surrounding STATUS_BG)
-            btn_pixel = (btn_active && btn_text_base != STATUS_BG)
+        if (any_btn_is_text) begin
+            // active: brighten by 48 unless px == surrounding bg
+            btn_pixel = (btn_active && btn_text_base != any_btn_bg)
                         ? brighten_rgb565(btn_text_base, 8'd48)
                         : btn_text_base;
         end else begin
-            // sprite path: transparent (0) → STATUS_BG; active → brighten 80.
+            // sprite path: transparent (0) → button bg; active → brighten 80.
             if (sprite_data == 16'h0000) begin
-                btn_pixel = STATUS_BG;
+                btn_pixel = any_btn_bg;
             end else if (btn_active) begin
                 btn_pixel = brighten_rgb565(sprite_data, 8'd80);
             end else begin
@@ -453,10 +555,10 @@ module pixel_shader (
         endcase
     end
 
-    // shade_image_mode_button: not exercised by current test cases
-    // (all use spectrum-only layout). Pass-through.
+    // shade_image_mode_button: in GOES_FULL / ADSB_FULL, overlay the floating
+    // buttons (drawn by the same btn_pixel path, with IMG_BG as surround).
     logic [15:0] post_image_btn;
-    assign post_image_btn = base;
+    assign post_image_btn = in_img_button ? btn_pixel : base;
 
     // ── shade_overlay (touch crosshair) ──────────────────────────────────
     logic signed [10:0] dx, dy;
