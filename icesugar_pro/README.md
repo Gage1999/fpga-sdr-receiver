@@ -33,13 +33,17 @@ When SV modules exist, add `icesugar_pro/sim/` testbenches that:
 
 ## ROM .mem files
 
-Generate with:
+The current FM RTL uses the model's 8x16 font ROM for the on-screen sample-rate
+status text. The IceSugar `Makefile` generates `build/font_8x16.mem`
+automatically before simulation or synthesis.
+
+Regenerate the ROMs manually with:
 
 ```sh
-python3 tools/rom_to_mem.py --out icesugar_pro/mem
+python3 tools/rom_to_mem.py --out icesugar_pro/build
 ```
 
-These are committed when the gateware build needs them, not before.
+The generated `.mem` files are build outputs and do not need to be committed.
 
 ## ADS-B basemap
 
