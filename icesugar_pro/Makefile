@@ -16,6 +16,7 @@ SV_SRCS = src/top.sv \
           src/i2s_tx.sv \
           src/color_lut.sv \
           src/font8x16_rom.sv \
+          src/scan_timing.sv \
           src/lcd.sv
 TOP      = top
 LPF      = top.lpf
@@ -116,8 +117,8 @@ sim_fm: tb/tb_fm_demod.sv src/fm_demod.sv | build
 	iverilog -g2012 -o build/fm_demod.sim $^
 	vvp build/fm_demod.sim
 
-sim_lcd: tb/tb_lcd.sv src/lcd.sv src/color_lut.sv src/font8x16_rom.sv build/font_8x16.mem | build
-	iverilog -g2012 -o build/lcd.sim tb/tb_lcd.sv src/lcd.sv src/color_lut.sv src/font8x16_rom.sv
+sim_lcd: tb/tb_lcd.sv src/lcd.sv src/color_lut.sv src/font8x16_rom.sv src/scan_timing.sv build/font_8x16.mem | build
+	iverilog -g2012 -o build/lcd.sim tb/tb_lcd.sv src/lcd.sv src/color_lut.sv src/font8x16_rom.sv src/scan_timing.sv
 	vvp build/lcd.sim
 
 sim_fft: tb/tb_fft256.sv src/fft256.sv src/butterfly.sv src/twiddle_rom.sv | build
