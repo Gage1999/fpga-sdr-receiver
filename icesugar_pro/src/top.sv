@@ -28,12 +28,78 @@ module top #(
     output logic [4:0] LCD_B
 );
 
+// Clock generation - 100 MHz SDRAM clock and 30 MHz pixel clock from 25 MHz input
+// CLKOP = CLKI * CLKFB_DIV / CLKI_DIV = 25 * 4 = 100 MHz
+// VCO = CLKOP * CLKOP_DIV = 100 * 6 = 600 MHz
+// CLKOS = VCO / CLKOS_DIV = 600 / 20 = 30 MHz
+logic clk_pix;
+logic clk_sdram;
+logic pll_locked;
+
+`ifdef SIMULATION
+assign clk_sdram  = CLK;
+assign clk_pix    = CLK;
+assign pll_locked = 1'b1;
+`else
+EHXPLLL #(
+    .PLLRST_ENA("DISABLED"),
+    .INTFB_WAKE("DISABLED"),
+    .STDBY_ENABLE("DISABLED"),
+    .DPHASE_SOURCE("DISABLED"),
+    .OUTDIVIDER_MUXA("DIVA"),
+    .OUTDIVIDER_MUXB("DIVB"),
+    .OUTDIVIDER_MUXC("DIVC"),
+    .OUTDIVIDER_MUXD("DIVD"),
+    .CLKI_DIV(1),
+    .CLKOP_ENABLE("ENABLED"),
+    .CLKOP_DIV(6),
+    .CLKOP_CPHASE(0),
+    .CLKOP_FPHASE(0),
+    .CLKOS_ENABLE("ENABLED"),
+    .CLKOS_DIV(20),
+    .CLKOS_CPHASE(0),
+    .CLKOS_FPHASE(0),
+    .CLKOS2_ENABLE("DISABLED"),
+    .CLKOS2_DIV(1),
+    .CLKOS2_CPHASE(0),
+    .CLKOS2_FPHASE(0),
+    .CLKOS3_ENABLE("DISABLED"),
+    .CLKOS3_DIV(1),
+    .CLKOS3_CPHASE(0),
+    .CLKOS3_FPHASE(0),
+    .FEEDBK_PATH("CLKOP"),
+    .CLKFB_DIV(4)
+) u_pll (
+    .CLKI(CLK),
+    .CLKFB(clk_sdram),
+    .CLKOP(clk_sdram),
+    .CLKOS(clk_pix),
+    .CLKOS2(),
+    .CLKOS3(),
+    .RST(1'b0),
+    .STDBY(1'b0),
+    .PHASESEL0(1'b0),
+    .PHASESEL1(1'b0),
+    .PHASEDIR(1'b0),
+    .PHASESTEP(1'b0),
+    .PLLWAKESYNC(1'b0),
+    .ENCLKOP(1'b0),
+    .ENCLKOS(1'b0),
+    .ENCLKOS2(1'b0),
+    .ENCLKOS3(1'b0),
+    .LOCK(pll_locked)
+);
+`endif
+
 // Reset
 logic [3:0] sys_rst_cnt = 4'd0;
 logic sys_rst = 1'b1;
 
 always_ff @(posedge CLK) begin
-    if (!sys_rst_cnt[3]) begin
+    if (!pll_locked) begin
+        sys_rst_cnt <= 4'd0;
+        sys_rst <= 1'b1;
+    end else if (!sys_rst_cnt[3]) begin
         sys_rst_cnt <= sys_rst_cnt + 4'd1;
         sys_rst <= 1'b1;
     end else begin
@@ -545,7 +611,7 @@ i2s_tx u_i2s (
 // LCD controller
 lcd u_lcd (
     .rst (sys_rst),
-    .pclk (CLK),
+    .pclk (clk_pix),
     .mode (mode),
     .volume (volume),
     .mute (mute),
@@ -562,6 +628,6 @@ lcd u_lcd (
     .LCD_B (LCD_B)
 );
 
-assign LCD_CLK = CLK;
+assign LCD_CLK = clk_pix;
 
 endmodule

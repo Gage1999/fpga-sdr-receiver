@@ -71,7 +71,7 @@ always_ff @(posedge pclk) begin
         x <= 11'd0;
         y <= 10'd0;
     end else begin
-        if (x < 11'd1055) begin
+        if (x < 11'd927) begin
             x <= x + 11'd1;
         end else begin
             x <= 11'd0;
