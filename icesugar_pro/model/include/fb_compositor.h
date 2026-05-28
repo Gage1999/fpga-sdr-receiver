@@ -52,18 +52,12 @@ typedef struct {
     uint16_t y;
 } adsb_plane_t;
 
-// Redraws the whole ADS-B region: a UCR-centered basemap (center marker, range
-// rings at 25/50/75 mi, cardinal crosshair, beyond-range shading — a stylized
-// placeholder for the real Riverside map image) plus a dot per aircraft. Ring
-// labels use the 8x16 font, so the ROM bundle is passed in. Slow-update — called
-// only when the plane set changes, so unlike the waterfall this mode needs no
-// back buffer.
-//
-// TODO: replace the stylized basemap with the real Riverside map image. That
-// image is ~700 KB (800x448 RGB565), too big for EBR, so it lives in SDRAM
-// (ADSB_BASEMAP) loaded from SPI config flash at boot — see the architecture
-// doc §6 — and the compositor just blits it instead of drawing the placeholder.
-// The ring/marker/plane overlay stays.
+// Redraws the whole ADS-B region: the host model loads the tracked Riverside
+// RGB565 basemap when present, darkens it for display contrast, and falls back
+// to a stylized UCR-centered placeholder otherwise. The header and ring labels
+// use the 8x16 font, so the ROM bundle is passed in. Hardware still expects the
+// same image in SDRAM (ADSB_BASEMAP) loaded from SPI config flash at boot — see
+// the architecture doc §6.
 void fb_compose_adsb_frame(fb_t *fb,
                            uint8_t layout,
                            const adsb_plane_t *planes,

@@ -11,6 +11,9 @@ Generate it with [`tools/map_to_rom.py`](../../../tools/map_to_rom.py):
 ```sh
 # UCR campus, 75-mi radius (outer ring) -> 800x448 RGB565
 python3 tools/map_to_rom.py --lat 33.9737 --lon -117.3281
+
+# Dark, muted display asset
+python3 tools/map_to_rom.py --lat 33.9737 --lon -117.3281 --dark
 ```
 
 Outputs (this directory):
@@ -29,6 +32,8 @@ so the map and its scale are visible in the repo.
 **Map data** defaults to OpenStreetMap (© OpenStreetMap contributors, ODbL).
 Follow the [tile usage policy](https://operations.osmfoundation.org/policies/tiles/),
 and point `--tile-url` at a provider whose terms permit embedding before shipping.
+The `--dark` option is a post-process pass; for truly sparse labels or road
+lines, use `--tile-url` with a provider/style that renders fewer features.
 
 The scale matches the renderer: the center pixel is the requested location and
 the 75-mi outer ring sits at `height/2` = 224 px (`ADSB_R_OUTER` in

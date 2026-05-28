@@ -20,6 +20,10 @@ Outputs (default icesugar_pro/model/assets/<name>.*):
     <name>.png    565-roundtrip preview (on-device colors)
     <name>.json   projection metadata (center, zoom, m/px) for plane placement
 
+Use --dark to post-process source tiles into the same low-brightness night
+style used by the simulator. This does not semantically remove map labels or
+roads; use --tile-url with a sparse/dark tile provider for that.
+
 Map data: defaults to the OpenStreetMap standard tile server. OSM tiles are
 © OpenStreetMap contributors (ODbL). Follow the tile usage policy
 (https://operations.osmfoundation.org/policies/tiles/): real User-Agent, no bulk
@@ -129,6 +133,24 @@ def build_map(args) -> "tuple":
                  "outer_ring_px": args.height // 2}
 
 
+def apply_display_style(img, dark: bool):
+    if not dark:
+        return img
+
+    rgb = img.convert("RGB")
+    px = rgb.load()
+    w, h = rgb.size
+    for y in range(h):
+        for x in range(w):
+            r, g, b = px[x, y]
+            gray = (30 * r + 59 * g + 11 * b) // 100
+            nr = (gray * 20) // 100
+            ng = (gray * 28) // 100
+            nb = min(104, 12 + (gray * 42) // 100)
+            px[x, y] = (nr, ng, nb)
+    return rgb
+
+
 def emit(img, meta, out_dir: Path, name: str) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     rgb = img.convert("RGB")
@@ -172,6 +194,8 @@ def main() -> int:
     ap.add_argument("--tile-url",
                     default="https://tile.openstreetmap.org/{z}/{x}/{y}.png",
                     help="slippy-tile URL template with {z}/{x}/{y}")
+    ap.add_argument("--dark", action="store_true",
+                    help="mute source tiles into a dark, low-detail display style")
     ap.add_argument("--user-agent",
                     default="fpga-sdr-receiver-maptool/0.1 (UCR CS122A project)")
     ap.add_argument("--cache-dir", default=str(ROOT / ".cache" / "map_tiles"))
@@ -179,6 +203,8 @@ def main() -> int:
     args = ap.parse_args()
 
     img, meta = build_map(args)
+    img = apply_display_style(img, args.dark)
+    meta["style"] = "dark" if args.dark else "source"
     emit(img, meta, args.out_dir, args.name)
     print("map data © OpenStreetMap contributors (ODbL) unless --tile-url overridden",
           file=sys.stderr)

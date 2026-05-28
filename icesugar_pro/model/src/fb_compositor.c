@@ -1,5 +1,7 @@
 #include "fb_compositor.h"
 
+#include <stdio.h>
+
 #include "regions.h"
 #include "screen_config.h"
 
@@ -58,32 +60,82 @@ void fb_compose_clear(fb_t *fb, region_t r, uint16_t color) {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// ADS-B map. Stylized UCR-centered placeholder: a center marker for the campus,
-// concentric range rings at 25/50/75 mi (the outer being the nominal reception
-// radius), a cardinal crosshair, and dimmer "beyond range" shading outside the
-// outer ring. Aircraft are amber dots on top. All integer math — adds, multiplies,
-// compares — so it maps to a write-side FSM on the ECP5. The real Riverside map
-// image replaces only the basemap (see fb_compositor.h); rings/marker/planes stay.
+// ADS-B map. The host model loads the tracked Riverside RGB565 basemap when it
+// is available; if not, it falls back to a stylized UCR/range-ring placeholder.
+// Aircraft and range labels are drawn on top either way.
 // ──────────────────────────────────────────────────────────────────────────────
 
 #define ADSB_CX        400   // region-local center (UCR), = w/2
-#define ADSB_CY        224   //                            = h/2
+#define ADSB_CY        240   //                            = h/2
 #define ADSB_R_25      75    // 224 * 25/75
 #define ADSB_R_50      149   // 224 * 50/75
 // outer ring (75 mi) is ADSB_R_OUTER from the header
 
-#define ADSB_IN_BG     RGB565(8, 20, 28)     // inside coverage
-#define ADSB_OUT_BG    RGB565(3, 8, 12)      // beyond the outer ring
-#define ADSB_RING_C    RGB565(40, 90, 80)    // range rings
-#define ADSB_CARD_C    RGB565(24, 50, 46)    // cardinal crosshair
-#define ADSB_CENTER_C  RGB565(90, 200, 255)  // UCR marker (cyan)
-#define ADSB_LABEL_C   RGB565(120, 200, 180) // ring labels
-#define ADSB_PLANE     RGB565(255, 210, 40)
+#define ADSB_BASEMAP_W 800u
+#define ADSB_BASEMAP_H 448u
+#define ADSB_BASEMAP_PATH "icesugar_pro/model/assets/riverside_ucr.bin"
+
+#define ADSB_IN_BG     RGB565(6, 18, 28)      // inside coverage
+#define ADSB_OUT_BG    RGB565(2, 6, 12)       // beyond the outer ring
+#define ADSB_RING_DIM  RGB565(0, 74, 88)      // range rings in fallback base
+#define ADSB_RING_C    RGB565(0, 220, 255)    // range rings
+#define ADSB_CENTER_C  RGB565(110, 235, 255)  // UCR marker (cyan)
+#define ADSB_LABEL_C   RGB565(235, 250, 255)  // ring labels
+#define ADSB_HEADER_BG RGB565(2, 8, 14)
+#define ADSB_HEADER_2  RGB565(120, 220, 255)
+#define ADSB_SHADOW    RGB565(0, 0, 0)
+#define ADSB_PLANE     RGB565(255, 220, 32)
 #define ADSB_CORE      RGB565(255, 255, 255)
 
-// True if d2 lands within ~2 px of the circle of radius R: (R-1)^2 <= d2 <= (R+1)^2.
-static int adsb_on_ring(int32_t d2, int32_t R) {
-    return d2 >= (R - 1) * (R - 1) && d2 <= (R + 1) * (R + 1);
+static uint16_t s_adsb_basemap[ADSB_BASEMAP_W * ADSB_BASEMAP_H];
+static int s_adsb_basemap_state;  // 0 unknown, 1 loaded, -1 unavailable
+
+static int adsb_load_basemap(void) {
+    if (s_adsb_basemap_state != 0) return s_adsb_basemap_state == 1;
+
+    FILE *f = fopen(ADSB_BASEMAP_PATH, "rb");
+    if (!f) {
+        s_adsb_basemap_state = -1;
+        return 0;
+    }
+
+    for (uint32_t i = 0; i < ADSB_BASEMAP_W * ADSB_BASEMAP_H; i++) {
+        int lo = fgetc(f);
+        int hi = fgetc(f);
+        if (lo < 0 || hi < 0) {
+            fclose(f);
+            s_adsb_basemap_state = -1;
+            return 0;
+        }
+        s_adsb_basemap[i] = (uint16_t)((uint16_t)(uint8_t)lo | ((uint16_t)(uint8_t)hi << 8));
+    }
+
+    fclose(f);
+    s_adsb_basemap_state = 1;
+    return 1;
+}
+
+static int adsb_map_y0(uint16_t region_h) {
+    return (region_h > ADSB_BASEMAP_H) ? (int)((region_h - ADSB_BASEMAP_H) / 2u) : 0;
+}
+
+static int adsb_on_ring_width(int32_t d2, int32_t R, int32_t width) {
+    int32_t inner = R - width;
+    int32_t outer = R + width;
+    if (inner < 0) inner = 0;
+    return d2 >= inner * inner && d2 <= outer * outer;
+}
+
+static uint16_t adsb_night_pixel(uint16_t p) {
+    uint16_t r = RGB565_R(p);
+    uint16_t g = RGB565_G(p);
+    uint16_t b = RGB565_B(p);
+    uint16_t gray = (uint16_t)((30u * r + 59u * g + 11u * b) / 100u);
+    uint16_t nr = (uint16_t)((gray * 20u) / 100u);
+    uint16_t ng = (uint16_t)((gray * 28u) / 100u);
+    uint16_t nb = (uint16_t)(12u + (gray * 42u) / 100u);
+    if (nb > 104u) nb = 104u;
+    return RGB565(nr, ng, nb);
 }
 
 static uint16_t adsb_basemap_pixel(uint16_t lx, uint16_t ly) {
@@ -95,11 +147,33 @@ static uint16_t adsb_basemap_pixel(uint16_t lx, uint16_t ly) {
     const int32_t r_out2 = ADSB_R_OUTER * ADSB_R_OUTER;
 
     if (adx + ady <= 3) return ADSB_CENTER_C;   // UCR marker (filled diamond)
-    if (adsb_on_ring(d2, ADSB_R_25) ||
-        adsb_on_ring(d2, ADSB_R_50) ||
-        adsb_on_ring(d2, ADSB_R_OUTER)) return ADSB_RING_C;
-    if (d2 <= r_out2 && (dx == 0 || dy == 0)) return ADSB_CARD_C;  // crosshair
+    if (adsb_on_ring_width(d2, ADSB_R_25, 1) ||
+        adsb_on_ring_width(d2, ADSB_R_50, 1) ||
+        adsb_on_ring_width(d2, ADSB_R_OUTER, 1)) return ADSB_RING_DIM;
     return (d2 <= r_out2) ? ADSB_IN_BG : ADSB_OUT_BG;
+}
+
+static uint16_t adsb_real_basemap_pixel(uint16_t lx, uint16_t ly, uint16_t region_h) {
+    int y0 = adsb_map_y0(region_h);
+    int map_y = (int)ly - y0;
+    if (lx >= ADSB_BASEMAP_W || map_y < 0 || map_y >= (int)ADSB_BASEMAP_H) {
+        return RGB565(2, 4, 8);
+    }
+    return adsb_night_pixel(s_adsb_basemap[(uint32_t)map_y * ADSB_BASEMAP_W + lx]);
+}
+
+static uint16_t adsb_overlay_pixel(uint16_t lx, uint16_t ly, uint16_t base) {
+    int32_t dx = (int32_t)lx - ADSB_CX;
+    int32_t dy = (int32_t)ly - ADSB_CY;
+    int32_t adx = dx < 0 ? -dx : dx;
+    int32_t ady = dy < 0 ? -dy : dy;
+    int32_t d2  = dx * dx + dy * dy;
+
+    if (adsb_on_ring_width(d2, ADSB_R_25, 2) ||
+        adsb_on_ring_width(d2, ADSB_R_50, 2) ||
+        adsb_on_ring_width(d2, ADSB_R_OUTER, 2)) return ADSB_RING_C;
+    if (adx + ady <= 5) return (adx + ady <= 2) ? ADSB_CORE : ADSB_CENTER_C;
+    return base;
 }
 
 // Blit an ASCII string in the 8x16 font at region-local (lx, ly), clipped to r.
@@ -122,6 +196,25 @@ static void adsb_text(fb_t *fb, region_t r, int32_t lx, int32_t ly,
     }
 }
 
+static void adsb_text_shadow(fb_t *fb, region_t r, int32_t lx, int32_t ly,
+                             const char *s, uint16_t color, const uint8_t *font) {
+    adsb_text(fb, r, (int32_t)(lx + 1), (int32_t)(ly + 1), s, ADSB_SHADOW, font);
+    adsb_text(fb, r, lx, ly, s, color, font);
+}
+
+static void adsb_fill_rect(fb_t *fb, region_t r, int32_t lx, int32_t ly,
+                           int32_t w, int32_t h, uint16_t color) {
+    for (int32_t yy = 0; yy < h; yy++) {
+        int32_t y = ly + yy;
+        if (y < 0 || y >= (int32_t)r.h) continue;
+        for (int32_t xx = 0; xx < w; xx++) {
+            int32_t x = lx + xx;
+            if (x < 0 || x >= (int32_t)r.w) continue;
+            fb_write(fb, (uint16_t)(r.x0 + x), (uint16_t)(r.y0 + y), color);
+        }
+    }
+}
+
 void fb_compose_adsb_frame(fb_t *fb,
                            uint8_t layout,
                            const adsb_plane_t *planes,
@@ -133,34 +226,47 @@ void fb_compose_adsb_frame(fb_t *fb,
     uint16_t n = r.w < SCREEN_W ? r.w : SCREEN_W;
 
     // Basemap, row by row.
+    int have_real_map = adsb_load_basemap();
     uint16_t scratch[SCREEN_W];
     for (uint16_t ly = 0; ly < r.h; ly++) {
         for (uint16_t lx = 0; lx < n; lx++) {
-            scratch[lx] = adsb_basemap_pixel(lx, ly);
+            uint16_t base = have_real_map ? adsb_real_basemap_pixel(lx, ly, r.h)
+                                          : adsb_basemap_pixel(lx, ly);
+            scratch[lx] = adsb_overlay_pixel(lx, ly, base);
         }
         fb_write_row(fb, r.x0, (uint16_t)(r.y0 + ly), scratch, n);
     }
 
-    // Labels: campus + range rings (distance in miles up the north axis).
-    adsb_text(fb, r, ADSB_CX + 6,  ADSB_CY - 6,                "UCR",   ADSB_CENTER_C, roms->font_8x16);
-    adsb_text(fb, r, ADSB_CX + 5,  ADSB_CY - ADSB_R_25 - 8,    "25",    ADSB_LABEL_C,  roms->font_8x16);
-    adsb_text(fb, r, ADSB_CX + 5,  ADSB_CY - ADSB_R_50 - 8,    "50",    ADSB_LABEL_C,  roms->font_8x16);
-    adsb_text(fb, r, ADSB_CX + 5,  ADSB_CY - ADSB_R_OUTER + 4, "75 MI", ADSB_LABEL_C,  roms->font_8x16);
+    char count_line[24];
+    snprintf(count_line, sizeof(count_line), "%u ACFT  75 MI", (unsigned)n_planes);
+    adsb_fill_rect(fb, r, 0, 0, 144, 40, ADSB_HEADER_BG);
+    adsb_text_shadow(fb, r, 8, 4, "ADS-B UCR", ADSB_LABEL_C, roms->font_8x16);
+    adsb_text_shadow(fb, r, 8, 20, count_line, ADSB_HEADER_2, roms->font_8x16);
 
-    // Aircraft: a 5-px diamond (|dx|+|dy| <= 2) with a white core, clipped.
+    // Labels: campus + range rings (distance in miles up the north axis).
+    adsb_text_shadow(fb, r, ADSB_CX + 8,  ADSB_CY - 8,                "UCR",   ADSB_CENTER_C, roms->font_8x16);
+    adsb_text_shadow(fb, r, ADSB_CX + 8,  ADSB_CY - ADSB_R_25 - 8,    "25",    ADSB_LABEL_C,  roms->font_8x16);
+    adsb_text_shadow(fb, r, ADSB_CX + 8,  ADSB_CY - ADSB_R_50 - 8,    "50",    ADSB_LABEL_C,  roms->font_8x16);
+    adsb_text_shadow(fb, r, ADSB_CX + 8,  ADSB_CY - ADSB_R_OUTER + 4, "75 MI", ADSB_LABEL_C,  roms->font_8x16);
+
+    // Aircraft: larger high-contrast diamonds with a black halo, clipped.
     for (uint8_t i = 0; i < n_planes && i < ADSB_MAX_PLANES; i++) {
         int32_t px = (int32_t)planes[i].x;
         int32_t py = (int32_t)planes[i].y;
-        for (int32_t ddy = -2; ddy <= 2; ddy++) {
-            for (int32_t ddx = -2; ddx <= 2; ddx++) {
-                int32_t adx = ddx < 0 ? -ddx : ddx;
-                int32_t ady = ddy < 0 ? -ddy : ddy;
-                if (adx + ady > 2) continue;
-                int32_t lx = px + ddx;
-                int32_t ly = py + ddy;
-                if (lx < 0 || lx >= (int32_t)r.w || ly < 0 || ly >= (int32_t)r.h) continue;
-                uint16_t color = (adx + ady == 0) ? ADSB_CORE : ADSB_PLANE;
-                fb_write(fb, (uint16_t)(r.x0 + lx), (uint16_t)(r.y0 + ly), color);
+        for (int32_t pass = 0; pass < 2; pass++) {
+            int32_t radius = pass == 0 ? 5 : 3;
+            for (int32_t ddy = -radius; ddy <= radius; ddy++) {
+                for (int32_t ddx = -radius; ddx <= radius; ddx++) {
+                    int32_t adx = ddx < 0 ? -ddx : ddx;
+                    int32_t ady = ddy < 0 ? -ddy : ddy;
+                    if (adx + ady > radius) continue;
+                    int32_t lx = px + ddx;
+                    int32_t ly = py + ddy;
+                    if (lx < 0 || lx >= (int32_t)r.w || ly < 0 || ly >= (int32_t)r.h) continue;
+                    uint16_t color = ADSB_SHADOW;
+                    if (pass == 1) color = (adx + ady <= 1) ? ADSB_CORE : ADSB_PLANE;
+                    fb_write(fb, (uint16_t)(r.x0 + lx), (uint16_t)(r.y0 + ly), color);
+                }
             }
         }
     }
