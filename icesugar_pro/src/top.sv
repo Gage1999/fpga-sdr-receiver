@@ -1,7 +1,8 @@
 module top #(
     parameter AUDIO_TEST_TONE = 0,
     parameter FM_CHAIN_TEST = 0,
-    parameter FM_CIC_R = 32
+    parameter FM_CIC_R = 32,
+    parameter CLK_HZ = 25_000_000
 )(
     input logic CLK,
 
@@ -155,6 +156,11 @@ logic [4:0] wf_frame_skip;
 logic [7:0] dbg_rx_count;
 logic [7:0] dbg_bin_count;
 logic [7:0] dbg_last_mag;
+localparam RX_SPS_CLK_W = $clog2(CLK_HZ);
+logic [31:0] rx_sps_bcd;
+logic [31:0] rx_sps_bcd_accum;
+logic [31:0] rx_sps_bcd_next;
+logic [RX_SPS_CLK_W-1:0] rx_sps_clk_count;
 
 localparam [4:0] WF_FRAME_DECIM = 5'd31;
 
@@ -181,6 +187,72 @@ always_ff @(posedge CLK) begin
             dbg_bin_count <= dbg_bin_count + 8'd1;
             dbg_last_mag <= bin_magnitude;
         end
+    end
+end
+
+function automatic logic [31:0] bcd_inc8(input logic [31:0] value);
+    logic [31:0] out;
+    begin
+        out = value;
+        if (out[3:0] != 4'd9) begin
+            out[3:0] = out[3:0] + 4'd1;
+        end else begin
+            out[3:0] = 4'd0;
+            if (out[7:4] != 4'd9) begin
+                out[7:4] = out[7:4] + 4'd1;
+            end else begin
+                out[7:4] = 4'd0;
+                if (out[11:8] != 4'd9) begin
+                    out[11:8] = out[11:8] + 4'd1;
+                end else begin
+                    out[11:8] = 4'd0;
+                    if (out[15:12] != 4'd9) begin
+                        out[15:12] = out[15:12] + 4'd1;
+                    end else begin
+                        out[15:12] = 4'd0;
+                        if (out[19:16] != 4'd9) begin
+                            out[19:16] = out[19:16] + 4'd1;
+                        end else begin
+                            out[19:16] = 4'd0;
+                            if (out[23:20] != 4'd9) begin
+                                out[23:20] = out[23:20] + 4'd1;
+                            end else begin
+                                out[23:20] = 4'd0;
+                                if (out[27:24] != 4'd9) begin
+                                    out[27:24] = out[27:24] + 4'd1;
+                                end else begin
+                                    out[27:24] = 4'd0;
+                                    if (out[31:28] != 4'd9)
+                                        out[31:28] = out[31:28] + 4'd1;
+                                    else
+                                        out[31:28] = 4'd0;
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        bcd_inc8 = out;
+    end
+endfunction
+
+always_comb begin
+    rx_sps_bcd_next = sys_iq_valid ? bcd_inc8(rx_sps_bcd_accum) : rx_sps_bcd_accum;
+end
+
+always_ff @(posedge CLK or posedge sys_rst) begin
+    if (sys_rst) begin
+        rx_sps_clk_count <= '0;
+        rx_sps_bcd_accum <= '0;
+        rx_sps_bcd <= '0;
+    end else if (rx_sps_clk_count == RX_SPS_CLK_W'(CLK_HZ - 1)) begin
+        rx_sps_clk_count <= '0;
+        rx_sps_bcd_accum <= '0;
+        rx_sps_bcd <= rx_sps_bcd_next;
+    end else begin
+        rx_sps_clk_count <= rx_sps_clk_count + 1'b1;
+        rx_sps_bcd_accum <= rx_sps_bcd_next;
     end
 end
 
@@ -460,6 +532,7 @@ lcd u_lcd (
     .dbg_rx_count (dbg_rx_count),
     .dbg_bin_count (dbg_bin_count),
     .dbg_last_mag (dbg_last_mag),
+    .rx_sps_bcd (rx_sps_bcd),
     .wf_magnitude (wf_magnitude),
     .wf_bin (wf_bin_req),
     .wf_row_age (wf_row_age_req),
