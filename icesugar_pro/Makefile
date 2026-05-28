@@ -95,8 +95,7 @@ build/fm_spi8.bit: $(SV_SRCS) $(LPF) build/font_8x16.mem | build
 prog_fm_spi8: build/fm_spi8.bit
 	icesprog $<
 
-<<<<<<< HEAD
-build/fm_spi8_paced.bit: $(SV_SRCS) $(LPF) | build
+build/fm_spi8_paced.bit: $(SV_SRCS) $(LPF) build/font_8x16.mem | build
 	yosys -p "chparam -set FM_CIC_R 8 -set IQ_PACED 1 -set IQ_SAMPLE_RATE 349000 -set IQ_FIFO_DEPTH 64 top; synth_ecp5 -top $(TOP) -json build/fm_spi8_paced.json" $(SV_SRCS)
 	nextpnr-ecp5 $(DEVICE) --json build/fm_spi8_paced.json --textcfg build/fm_spi8_paced.cfg --lpf $(LPF) --freq 25
 	ecppack build/fm_spi8_paced.cfg $@
@@ -104,12 +103,8 @@ build/fm_spi8_paced.bit: $(SV_SRCS) $(LPF) | build
 prog_fm_spi8_paced: build/fm_spi8_paced.bit
 	icesprog $<
 
-sim: tb/top_tb.sv $(SV_SRCS) | build
-	iverilog -g2012 -o build/$(TOP).sim $^
-=======
 sim: tb/top_tb.sv $(SV_SRCS) build/font_8x16.mem | build
 	iverilog -g2012 -o build/$(TOP).sim tb/top_tb.sv $(SV_SRCS)
->>>>>>> 4a9cc2901a0c2c55ddb96d7063d54b2ba5c8d52e
 	vvp build/$(TOP).sim
 	gtkwave build/$(TOP).vcd
 
