@@ -67,12 +67,6 @@ void fb_compose_clear(fb_t *fb, region_t r, uint16_t color) {
 // Aircraft and range labels are drawn on top either way.
 // ──────────────────────────────────────────────────────────────────────────────
 
-#define ADSB_CX        400   // region-local center (UCR), = w/2
-#define ADSB_CY        240   //                            = h/2
-#define ADSB_R_25      75    // 224 * 25/75
-#define ADSB_R_50      149   // 224 * 50/75
-// outer ring (75 mi) is ADSB_R_OUTER from the header
-
 #define ADSB_BASEMAP_W 800u
 #define ADSB_BASEMAP_H 448u
 #define ADSB_BASEMAP_PATH "icesugar_pro/model/assets/riverside_ucr.bin"
@@ -124,6 +118,57 @@ static int adsb_map_y0(uint16_t region_h) {
     return (region_h > ADSB_BASEMAP_H) ? (int)((region_h - ADSB_BASEMAP_H) / 2u) : 0;
 }
 
+typedef struct {
+    int32_t x0;
+    int32_t y0;
+    int32_t w;
+    int32_t h;
+} adsb_view_t;
+
+static adsb_view_t adsb_view_for(region_t r) {
+    int32_t avail_y = (r.h > ADSB_HEADER_H) ? ADSB_HEADER_H : 0;
+    int32_t avail_h = (int32_t)r.h - avail_y;
+    if (avail_h > 4) avail_h -= 4;  // keep the outer ring off the screen edge
+    if (avail_h < 1) avail_h = 1;
+
+    int32_t w = (int32_t)((uint32_t)ADSB_BASEMAP_W * (uint32_t)avail_h / ADSB_BASEMAP_H);
+    int32_t h = avail_h;
+    if (w > (int32_t)r.w) {
+        w = r.w;
+        h = (int32_t)((uint32_t)ADSB_BASEMAP_H * (uint32_t)w / ADSB_BASEMAP_W);
+    }
+    if (w < 1) w = 1;
+    if (h < 1) h = 1;
+
+    adsb_view_t v;
+    v.x0 = ((int32_t)r.w - w) / 2;
+    v.y0 = avail_y + (((int32_t)r.h - avail_y) - h) / 2;
+    v.w = w;
+    v.h = h;
+    return v;
+}
+
+static int32_t adsb_view_cx(adsb_view_t v) { return v.x0 + v.w / 2; }
+static int32_t adsb_view_cy(adsb_view_t v) { return v.y0 + v.h / 2; }
+
+static int32_t adsb_view_radius(adsb_view_t v, int32_t mi) {
+    return (int32_t)((uint32_t)v.h * (uint32_t)ADSB_R_OUTER * (uint32_t)mi /
+                    ((uint32_t)ADSB_BASEMAP_H * (uint32_t)ADSB_RADIUS_MI));
+}
+
+static int32_t adsb_project_x(adsb_view_t v, uint16_t logical_x) {
+    uint16_t x = logical_x;
+    if (x >= ADSB_BASEMAP_W) x = ADSB_BASEMAP_W - 1u;
+    return v.x0 + (int32_t)((uint32_t)x * (uint32_t)v.w / ADSB_BASEMAP_W);
+}
+
+static int32_t adsb_project_y(adsb_view_t v, uint16_t region_h, uint16_t logical_y) {
+    int32_t src_y = (int32_t)logical_y - adsb_map_y0(region_h);
+    if (src_y < 0) src_y = 0;
+    if (src_y >= (int32_t)ADSB_BASEMAP_H) src_y = (int32_t)ADSB_BASEMAP_H - 1;
+    return v.y0 + (int32_t)((uint32_t)src_y * (uint32_t)v.h / ADSB_BASEMAP_H);
+}
+
 static int adsb_on_ring_width(int32_t d2, int32_t R, int32_t width) {
     int32_t inner = R - width;
     int32_t outer = R + width;
@@ -143,40 +188,61 @@ static uint16_t adsb_night_pixel(uint16_t p) {
     return RGB565(nr, ng, nb);
 }
 
-static uint16_t adsb_basemap_pixel(uint16_t lx, uint16_t ly) {
-    int32_t dx = (int32_t)lx - ADSB_CX;
-    int32_t dy = (int32_t)ly - ADSB_CY;
+static uint16_t adsb_basemap_pixel(region_t r, uint16_t lx, uint16_t ly) {
+    adsb_view_t v = adsb_view_for(r);
+    if ((int32_t)lx < v.x0 || (int32_t)lx >= v.x0 + v.w ||
+        (int32_t)ly < v.y0 || (int32_t)ly >= v.y0 + v.h) {
+        return RGB565(2, 4, 8);
+    }
+
+    int32_t cx = adsb_view_cx(v);
+    int32_t cy = adsb_view_cy(v);
+    int32_t r25 = adsb_view_radius(v, 25);
+    int32_t r50 = adsb_view_radius(v, 50);
+    int32_t r75 = adsb_view_radius(v, ADSB_RADIUS_MI);
+    int32_t dx = (int32_t)lx - cx;
+    int32_t dy = (int32_t)ly - cy;
     int32_t adx = dx < 0 ? -dx : dx;
     int32_t ady = dy < 0 ? -dy : dy;
     int32_t d2  = dx * dx + dy * dy;
-    const int32_t r_out2 = ADSB_R_OUTER * ADSB_R_OUTER;
+    const int32_t r_out2 = r75 * r75;
 
     if (adx + ady <= 3) return ADSB_CENTER_C;   // UCR marker (filled diamond)
-    if (adsb_on_ring_width(d2, ADSB_R_25, 1) ||
-        adsb_on_ring_width(d2, ADSB_R_50, 1) ||
-        adsb_on_ring_width(d2, ADSB_R_OUTER, 1)) return ADSB_RING_DIM;
+    if (adsb_on_ring_width(d2, r25, 1) ||
+        adsb_on_ring_width(d2, r50, 1) ||
+        adsb_on_ring_width(d2, r75, 1)) return ADSB_RING_DIM;
     return (d2 <= r_out2) ? ADSB_IN_BG : ADSB_OUT_BG;
 }
 
-static uint16_t adsb_real_basemap_pixel(uint16_t lx, uint16_t ly, uint16_t region_h) {
-    int y0 = adsb_map_y0(region_h);
-    int map_y = (int)ly - y0;
-    if (lx >= ADSB_BASEMAP_W || map_y < 0 || map_y >= (int)ADSB_BASEMAP_H) {
+static uint16_t adsb_real_basemap_pixel(region_t r, uint16_t lx, uint16_t ly) {
+    adsb_view_t v = adsb_view_for(r);
+    if ((int32_t)lx < v.x0 || (int32_t)lx >= v.x0 + v.w ||
+        (int32_t)ly < v.y0 || (int32_t)ly >= v.y0 + v.h) {
         return RGB565(2, 4, 8);
     }
-    return adsb_night_pixel(s_adsb_basemap[(uint32_t)map_y * ADSB_BASEMAP_W + lx]);
+    uint16_t src_x = (uint16_t)(((uint32_t)((int32_t)lx - v.x0) * ADSB_BASEMAP_W) / (uint32_t)v.w);
+    uint16_t src_y = (uint16_t)(((uint32_t)((int32_t)ly - v.y0) * ADSB_BASEMAP_H) / (uint32_t)v.h);
+    if (src_x >= ADSB_BASEMAP_W) src_x = ADSB_BASEMAP_W - 1u;
+    if (src_y >= ADSB_BASEMAP_H) src_y = ADSB_BASEMAP_H - 1u;
+    return adsb_night_pixel(s_adsb_basemap[(uint32_t)src_y * ADSB_BASEMAP_W + src_x]);
 }
 
-static uint16_t adsb_overlay_pixel(uint16_t lx, uint16_t ly, uint16_t base) {
-    int32_t dx = (int32_t)lx - ADSB_CX;
-    int32_t dy = (int32_t)ly - ADSB_CY;
+static uint16_t adsb_overlay_pixel(region_t r, uint16_t lx, uint16_t ly, uint16_t base) {
+    adsb_view_t v = adsb_view_for(r);
+    int32_t cx = adsb_view_cx(v);
+    int32_t cy = adsb_view_cy(v);
+    int32_t r25 = adsb_view_radius(v, 25);
+    int32_t r50 = adsb_view_radius(v, 50);
+    int32_t r75 = adsb_view_radius(v, ADSB_RADIUS_MI);
+    int32_t dx = (int32_t)lx - cx;
+    int32_t dy = (int32_t)ly - cy;
     int32_t adx = dx < 0 ? -dx : dx;
     int32_t ady = dy < 0 ? -dy : dy;
     int32_t d2  = dx * dx + dy * dy;
 
-    if (adsb_on_ring_width(d2, ADSB_R_25, 2) ||
-        adsb_on_ring_width(d2, ADSB_R_50, 2) ||
-        adsb_on_ring_width(d2, ADSB_R_OUTER, 2)) return ADSB_RING_C;
+    if (adsb_on_ring_width(d2, r25, 2) ||
+        adsb_on_ring_width(d2, r50, 2) ||
+        adsb_on_ring_width(d2, r75, 2)) return ADSB_RING_C;
     if (adx + ady <= 5) return (adx + ady <= 2) ? ADSB_CORE : ADSB_CENTER_C;
     return base;
 }
@@ -322,11 +388,15 @@ static void fb_compose_adsb_header(fb_t *fb,
 
     text16_shadow(fb, r, 4, 3, "1090.00 MHZ", ADSB_HEADER_FG, roms->font_16x32);
     text16_shadow(fb, r, 372, 3, "ADSB", ADSB_HEADER_FG, roms->font_16x32);
+    text16_shadow(fb, r, 512, 3, "ZOOM", ADSB_HEADER_FG, roms->font_16x32);
 
     text16_shadow(fb, r, 4, 32, count_line, ADSB_HEADER_2, roms->font_16x32);
-    text16_shadow(fb, r, 136, 32, "75 MI", ADSB_HEADER_DIM, roms->font_16x32);
-    text16_shadow(fb, r, 256, 32, ident_line, ADSB_HEADER_DIM, roms->font_16x32);
-    text16_shadow(fb, r, 384, 32, speed_line, ADSB_HEADER_DIM, roms->font_16x32);
+    text16_shadow(fb, r, 136, 32, "LEAD", ADSB_HEADER_DIM, roms->font_16x32);
+    text16_shadow(fb, r, 216, 32, ident_line, ADSB_HEADER_FG, roms->font_16x32);
+    text16_shadow(fb, r, 336, 32, speed_line, ADSB_HEADER_DIM, roms->font_16x32);
+    text16_shadow(fb, r, 512, 32, "25", ADSB_HEADER_DIM, roms->font_16x32);
+    text16_shadow(fb, r, 560, 32, "50", ADSB_HEADER_DIM, roms->font_16x32);
+    text16_shadow(fb, r, 608, 32, "75", ADSB_HEADER_2, roms->font_16x32);
 }
 
 void fb_compose_adsb_frame(fb_t *fb,
@@ -344,23 +414,30 @@ void fb_compose_adsb_frame(fb_t *fb,
     uint16_t scratch[SCREEN_W];
     for (uint16_t ly = 0; ly < r.h; ly++) {
         for (uint16_t lx = 0; lx < n; lx++) {
-            uint16_t base = have_real_map ? adsb_real_basemap_pixel(lx, ly, r.h)
-                                          : adsb_basemap_pixel(lx, ly);
-            scratch[lx] = adsb_overlay_pixel(lx, ly, base);
+            uint16_t base = have_real_map ? adsb_real_basemap_pixel(r, lx, ly)
+                                          : adsb_basemap_pixel(r, lx, ly);
+            scratch[lx] = adsb_overlay_pixel(r, lx, ly, base);
         }
         fb_write_row(fb, r.x0, (uint16_t)(r.y0 + ly), scratch, n);
     }
 
+    adsb_view_t view = adsb_view_for(r);
+    int32_t map_cx = adsb_view_cx(view);
+    int32_t map_cy = adsb_view_cy(view);
+    int32_t r25 = adsb_view_radius(view, 25);
+    int32_t r50 = adsb_view_radius(view, 50);
+    int32_t r75 = adsb_view_radius(view, ADSB_RADIUS_MI);
+
     // Labels: campus + range rings (distance in miles up the north axis).
-    adsb_text_shadow(fb, r, ADSB_CX + 8,  ADSB_CY - 8,                "UCR",   ADSB_CENTER_C, roms->font_8x16);
-    adsb_text_shadow(fb, r, ADSB_CX + 8,  ADSB_CY - ADSB_R_25 - 8,    "25",    ADSB_LABEL_C,  roms->font_8x16);
-    adsb_text_shadow(fb, r, ADSB_CX + 8,  ADSB_CY - ADSB_R_50 - 8,    "50",    ADSB_LABEL_C,  roms->font_8x16);
-    adsb_text_shadow(fb, r, ADSB_CX + 8,  ADSB_CY - ADSB_R_OUTER + 4, "75 MI", ADSB_LABEL_C,  roms->font_8x16);
+    adsb_text_shadow(fb, r, map_cx + 8, map_cy - 8,       "UCR",   ADSB_CENTER_C, roms->font_8x16);
+    adsb_text_shadow(fb, r, map_cx + 8, map_cy - r25 - 8, "25",    ADSB_LABEL_C,  roms->font_8x16);
+    adsb_text_shadow(fb, r, map_cx + 8, map_cy - r50 - 8, "50",    ADSB_LABEL_C,  roms->font_8x16);
+    adsb_text_shadow(fb, r, map_cx + 8, map_cy - r75 + 4, "75 MI", ADSB_LABEL_C,  roms->font_8x16);
 
     // Aircraft: larger high-contrast diamonds with a black halo, clipped.
     for (uint8_t i = 0; i < n_planes && i < ADSB_MAX_PLANES; i++) {
-        int32_t px = (int32_t)planes[i].x;
-        int32_t py = (int32_t)planes[i].y;
+        int32_t px = adsb_project_x(view, planes[i].x);
+        int32_t py = adsb_project_y(view, r.h, planes[i].y);
         for (int32_t pass = 0; pass < 2; pass++) {
             int32_t radius = pass == 0 ? 5 : 3;
             for (int32_t ddy = -radius; ddy <= radius; ddy++) {

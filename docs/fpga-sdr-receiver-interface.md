@@ -222,7 +222,7 @@ CS, e.g.:
 ```
 count(u8), then count × {
     icao(u24),          // 24-bit ICAO address
-    x(u16), y(u16),     // pre-projected to map-region pixels (Zynq does the math)
+    x(u16), y(u16),     // pre-projected to logical map pixels; ECP5 fits viewport
     callsign/tail(8),   // text bytes, e.g. N321UA; ECP5 model adds local NUL
     alt_ft(u16),
     speed_kt(u16),
@@ -232,11 +232,12 @@ count(u8), then count × {
 
 **ECP5 side:** already specified in the model. `DEMOD_ADSB`/`LAYOUT_ADSB_FULL`
 exist in `ui_state.h`; the SDRAM map has `ADSB_BASEMAP`; `fb_compositor.c` has
-`fb_compose_adsb_frame()` with a dark basemap pass, range rings, an FM/AM-style
-status header, tail/callsign + altitude labels, and high-contrast aircraft
-markers; `tools/map_to_rom.py` builds the UCR-centered basemap and can export a
-dark RGB565 asset with `--dark`. On mode entry the compositor blits the basemap
-once, then plots aircraft metadata per update — slow enough to single-buffer.
+`fb_compose_adsb_frame()` with a dark basemap pass fitted below the header,
+range rings, an FM/AM-style status header with zoom ladder, tail/callsign +
+altitude labels, and high-contrast aircraft markers; `tools/map_to_rom.py`
+builds the UCR-centered basemap and can export a dark RGB565 asset with
+`--dark`. On mode entry the compositor blits the basemap once, then plots
+aircraft metadata per update — slow enough to single-buffer.
 
 So once the SDRAM framebuffer and a non-IQ Zynq→ECP5 path exist, ADS-B is:
 add a `mode` value, an `ADSB_PLANES` packet, and a 1090 MHz antenna (§9). The

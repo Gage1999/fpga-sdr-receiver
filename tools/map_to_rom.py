@@ -6,9 +6,10 @@ asset for the ADS-B map mode (icesugar_pro/model/src/fb_compositor.c).
 Like tools/gen_roms.py this is run by hand, not at build time. It produces the
 static basemap the ECP5 blits into the ADS-B region (800x448) from SDRAM; the
 range rings and aircraft dots are drawn on top by the compositor. The output
-scale matches the renderer: the center pixel is the requested location, and the
-75-mi outer range ring (ADSB_R_OUTER = 224 px in fb_compositor.h) sits at
-height/2, i.e. radius_mi maps to height/2 pixels.
+scale is the logical source-map scale: the center pixel is the requested
+location, and the 75-mi outer range ring (ADSB_R_OUTER = 224 px in
+fb_compositor.h) sits at height/2. The renderer fits this source below the
+ADS-B header and scales aircraft positions with it.
 
     # UCR campus, default 75-mi radius -> 800x448 RGB565
     python3 tools/map_to_rom.py --lat 33.9737 --lon -117.3281

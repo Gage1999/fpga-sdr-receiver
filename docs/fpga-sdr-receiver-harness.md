@@ -324,10 +324,11 @@ void fb_compose_goes_panel(fb_t *fb, uint8_t layout,
 
 void fb_compose_clear(fb_t *fb, region_t r, uint16_t color);
 
-// ADS-B map: darkened static basemap + range rings, FM/AM-style status header,
-// aircraft identifiers/altitude labels, and one high-contrast marker per
-// aircraft. Slow-update, so no back buffer. The real version blits a Riverside
-// map-image ROM; the fallback is procedural.
+// ADS-B map: darkened static basemap fit below the header + range rings,
+// FM/AM-style status header with zoom ladder, aircraft identifiers/altitude
+// labels, and one high-contrast marker per aircraft. Slow-update, so no back
+// buffer. The real version blits a Riverside map-image ROM; the fallback is
+// procedural.
 typedef struct {
     uint16_t x, y;
     char     ident[9];  // 8-byte tail/callsign plus local NUL terminator

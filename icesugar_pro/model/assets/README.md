@@ -35,7 +35,9 @@ and point `--tile-url` at a provider whose terms permit embedding before shippin
 The `--dark` option is a post-process pass; for truly sparse labels or road
 lines, use `--tile-url` with a provider/style that renders fewer features.
 
-The scale matches the renderer: the center pixel is the requested location and
-the 75-mi outer ring sits at `height/2` = 224 px (`ADSB_R_OUTER` in
-`../include/fb_compositor.h`). Aircraft are projected from their range/bearing
-off the center using `meters_per_px` from the `.json`.
+The scale is the logical source-map scale: the center pixel is the requested
+location and the 75-mi outer ring sits at `height/2` = 224 px
+(`ADSB_R_OUTER` in `../include/fb_compositor.h`). The renderer fits this
+800×448 source below the ADS-B header and scales aircraft positions with it.
+Aircraft are projected from their range/bearing off the center using
+`meters_per_px` from the `.json`.

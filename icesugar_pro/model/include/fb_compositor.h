@@ -41,17 +41,19 @@ void fb_compose_clear(fb_t *fb, region_t r, uint16_t color);
 // ──────────────────────────────────────────────────────────────────────────────
 // ADS-B map mode.
 //
-// One tracked aircraft: position in region-local pixels (0..region_w-1,
-// 0..region_h-1), plus the compact metadata the map labels need. The Zynq side
-// computes x/y by projecting decoded ADS-B positions from UCR (the region
-// center) onto the map at ADSB_RADIUS_MI = ADSB_R_OUTER px.
+// One tracked aircraft: position in logical 800x480 map pixels, plus the
+// compact metadata the map labels need. The renderer scales x/y into the
+// post-header map viewport. The Zynq side computes x/y by projecting decoded
+// ADS-B positions from UCR (the logical map center) onto the source map at
+// ADSB_RADIUS_MI = ADSB_R_OUTER px.
 // ──────────────────────────────────────────────────────────────────────────────
 
 #define ADSB_MAX_PLANES 16
 #define ADSB_IDENT_CHARS 8
 
-// Map scale: UCR campus is the region center; the outer range ring is the
-// nominal ADS-B reception radius. 75 mi maps to 224 px (half the 448-px height).
+// Logical source-map scale: UCR campus is the source center; the outer range
+// ring is the nominal ADS-B reception radius. 75 mi maps to 224 px in the
+// 800x448 basemap, then the renderer fits that map below the ADS-B header.
 #define ADSB_RADIUS_MI 75
 #define ADSB_R_OUTER   224
 
