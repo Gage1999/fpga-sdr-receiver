@@ -162,6 +162,7 @@ pico2w/
 | | |
 |---|---|
 | [`docs/fpga-sdr-receiver-architecture.md`](docs/fpga-sdr-receiver-architecture.md) | ECP5 data path, SDRAM arbiter, EBR map, display timing |
+| [`docs/fpga-sdr-receiver-interface.md`](docs/fpga-sdr-receiver-interface.md) | Zynq↔ECP5↔Pico links: JP5 IQ stream, Pico command set, demod split, open paths |
 | [`docs/fpga-sdr-receiver-harness.md`](docs/fpga-sdr-receiver-harness.md) | Host harness design, portability contract, wire protocol |
 | [`icesugar_pro/README.md`](icesugar_pro/README.md) | Gateware bring-up order, ROM generation, SDRAM notes |
 | [`plutosky/docs/architecture.md`](plutosky/docs/architecture.md) | RF hardware, boot chain, FPGA design, AXI SPI map |

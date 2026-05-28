@@ -22,6 +22,7 @@ lcd dut (
     .dbg_rx_count (8'd0),
     .dbg_bin_count (8'd0),
     .dbg_last_mag (8'd0),
+    .rx_sps_bcd (32'h00390625),
     .wf_magnitude (wf_magnitude),
     .wf_bin (wf_bin),
     .wf_row_age (wf_row_age),
@@ -86,6 +87,16 @@ initial begin
         $display("PASS x=768 outside waterfall");
     end
 
+    wait (dut.x == 11'd664 && dut.y == 10'd464);
+    #1;
+
+    if ({LCD_R, LCD_G, LCD_B} !== 16'hffff) begin
+        $display("FAIL status text pixel: expected white got 0x%h", {LCD_R, LCD_G, LCD_B});
+        errors++;
+    end else begin
+        $display("PASS status text pixel is white");
+    end
+
     if (errors == 0)
         $display("ALL TESTS PASSED");
     else
@@ -95,10 +106,9 @@ initial begin
 end
 
 initial begin
-    #10_000_000;
+    #25_000_000;
     $display("TIMEOUT");
     $finish;
 end
 
 endmodule
-

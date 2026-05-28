@@ -56,7 +56,27 @@ void fb_write_row(fb_t *fb, uint16_t x, uint16_t y,
 }
 
 void fb_swap(fb_t *fb) {
+    // The plane we just composited and scanned out (the current back) becomes
+    // the new front. Copy it into the new back so the *next* frame's
+    // incremental compositing (waterfall / GOES scroll, which read-modify-write
+    // their own prior rows) builds on the image that was actually just shown —
+    // not this plane's stale two-frames-ago state. Without this copy the two
+    // planes accumulate independent every-other-frame histories and the
+    // waterfall flickers between them at the refresh rate.
+    uint16_t (*old_back)[SCREEN_W] = back_plane(fb);
     fb->front ^= 1u;
+    uint16_t (*new_back)[SCREEN_W] = back_plane(fb);
+    memcpy(new_back, old_back, SCREEN_W * SCREEN_H * sizeof(uint16_t));
+}
+
+void fb_host_clear(struct fb *fb, uint16_t color) {
+    uint16_t (*bp)[SCREEN_W] = back_plane(fb);
+    uint16_t (*fp)[SCREEN_W] = front_plane(fb);
+    for (int y = 0; y < SCREEN_H; y++)
+        for (int x = 0; x < SCREEN_W; x++) {
+            bp[y][x] = color;
+            fp[y][x] = color;
+        }
 }
 
 void fb_host_snapshot_front(const struct fb *fb, uint16_t *dst) {

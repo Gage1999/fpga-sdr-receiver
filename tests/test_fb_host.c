@@ -55,7 +55,24 @@ void fb_write_row(fb_t *fb, uint16_t x, uint16_t y,
 }
 
 void fb_swap(fb_t *fb) {
+    // Mirror host/src/fb_host.c: copy the just-composited plane into the new
+    // back so incremental compositing carries forward coherently (no
+    // every-other-frame divergence). Tests snapshot BACK before swapping, so
+    // this doesn't alter any golden result; it just keeps the semantics in sync.
+    uint16_t (*old_back)[SCREEN_W] = back_plane(fb);
     fb->front ^= 1u;
+    uint16_t (*new_back)[SCREEN_W] = back_plane(fb);
+    memcpy(new_back, old_back, SCREEN_W * SCREEN_H * sizeof(uint16_t));
+}
+
+// Mirror host/src/fb_host.c::fb_host_clear — clear BOTH planes (used on a
+// layout/mode change so newly exposed regions don't show stale pixels).
+void test_fb_clear(struct fb *fb, uint16_t color) {
+    for (int y = 0; y < SCREEN_H; y++)
+        for (int x = 0; x < SCREEN_W; x++) {
+            fb->a[y][x] = color;
+            fb->b[y][x] = color;
+        }
 }
 
 void test_fb_snapshot_back(const struct fb *fb, uint16_t *dst) {

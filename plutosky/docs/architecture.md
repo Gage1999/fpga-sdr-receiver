@@ -233,6 +233,12 @@ The current userspace code sends one IQ sample as four MSB-first bytes:
 `plutosky/tests/test_icesugar.c` and `plutosky/src/icesugar_stream.c` use the
 controller to send synthetic or live IQ to the iCeSugar Pro.
 
+The full link picture — what the ECP5 does with this IQ (FM demod, FFT/
+waterfall), the Pico command channel, and the open retune/GOES/ADS-B paths — is
+in [`docs/fpga-sdr-receiver-interface.md`](../../docs/fpga-sdr-receiver-interface.md).
+Note the LO is currently set by `icesugar_stream` here on the Pluto; there is no
+path back from the ECP5/Pico to retune the radio (JP5 MISO is unused).
+
 ---
 
 ## 6. AXI Address Map
