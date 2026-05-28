@@ -143,9 +143,9 @@ static uint16_t shade_status(uint16_t lx, uint16_t ly, uint16_t w,
     }
 
     // Volume bar at x=220..360, centered on the top text row.
-    if (lx >= 220 && lx < 360 && ly >= 14 && ly < 34) {
+    if (lx >= 220 && lx < 360 && ly >= 6 && ly < 26) {
         uint16_t local_x = (uint16_t)(lx - 220);
-        if (lx == 220 || lx == 359 || ly == 14 || ly == 33) return dim;
+        if (lx == 220 || lx == 359 || ly == 6 || ly == 25) return dim;
         uint16_t fill = (uint16_t)((uint32_t)ui->volume * 136u / 100u);
         return (local_x >= 2 && local_x - 2 < fill) ? accent : RGB565(40, 48, 60);
     }
