@@ -30,6 +30,22 @@ static uint8_t status_btn_sprite(uint8_t btn, const ui_state_t *ui) {
     }
 }
 
+static uint16_t blend_rgb565_quarter(uint16_t base, uint16_t tint) {
+    uint16_t r = (uint16_t)((3u * RGB565_R(base) + RGB565_R(tint)) >> 2);
+    uint16_t g = (uint16_t)((3u * RGB565_G(base) + RGB565_G(tint)) >> 2);
+    uint16_t b = (uint16_t)((3u * RGB565_B(base) + RGB565_B(tint)) >> 2);
+    return RGB565(r, g, b);
+}
+
+static uint16_t mode_button_accent(const ui_state_t *ui) {
+    switch (ui->demod) {
+    case DEMOD_AM:   return RGB565(255, 185, 70);
+    case DEMOD_GOES: return RGB565(80, 220, 255);
+    case DEMOD_ADSB: return RGB565(255, 110, 210);
+    default:         return RGB565(80, 230, 140);
+    }
+}
+
 static uint16_t draw_status_button(uint16_t lx, uint16_t ly,
                                    uint8_t btn_id,
                                    uint16_t bg,
@@ -42,12 +58,22 @@ static uint16_t draw_status_button(uint16_t lx, uint16_t ly,
 
     uint16_t local_x = (uint16_t)(lx - x0);
     uint16_t local_y = (uint16_t)(ly - y0);
+    if (btn_id == UI_BTN_MODE) {
+        uint16_t accent = mode_button_accent(ui);
+        if (local_x < 3 || local_y < 3 ||
+            local_x >= UI_STATUS_BTN_W - 3u || local_y >= UI_STATUS_BTN_W - 3u) {
+            return accent;
+        }
+        bg = blend_rgb565_quarter(bg, accent);
+    }
+
     uint16_t spx = (uint16_t)((uint32_t)local_x * SPRITE_W / UI_STATUS_BTN_W);
     uint16_t spy = (uint16_t)((uint32_t)local_y * SPRITE_H / UI_STATUS_BTN_W);
     uint8_t sprite_id = status_btn_sprite(btn_id, ui);
     uint16_t px = roms->sprites[(uint32_t)sprite_id * SPRITE_PIXELS
                                 + (uint32_t)spy * SPRITE_W + spx];
     if (px == 0) return bg;
+    if (btn_id == UI_BTN_MODE) px = blend_rgb565_quarter(px, mode_button_accent(ui));
     if (btn_id == ui->active_button) {
         uint8_t r = (uint8_t)RGB565_R(px);
         uint8_t g = (uint8_t)RGB565_G(px);
@@ -58,6 +84,28 @@ static uint16_t draw_status_button(uint16_t lx, uint16_t ly,
         return RGB565(r, g, b);
     }
     return px;
+}
+
+static uint16_t draw_link_lock_indicator(uint16_t lx, uint16_t ly,
+                                         uint16_t x0, uint16_t y0, uint16_t size,
+                                         uint16_t bg,
+                                         const ui_state_t *ui,
+                                         const aux_roms_t *roms) {
+    if (lx < x0 || lx >= x0 + size || ly < y0 || ly >= y0 + size) return bg;
+
+    uint16_t local_x = (uint16_t)(lx - x0);
+    uint16_t local_y = (uint16_t)(ly - y0);
+    uint16_t locked = (ui->flags & UI_FLAG_LINK_LOCK) != 0;
+    uint16_t accent = locked ? RGB565(80, 230, 140) : RGB565(255, 190, 70);
+    uint16_t fill = locked ? RGB565(12, 36, 30) : RGB565(42, 28, 10);
+    if (local_x == 0 || local_y == 0 || local_x == size - 1u || local_y == size - 1u) return accent;
+
+    uint16_t spx = (uint16_t)((uint32_t)local_x * SPRITE_W / size);
+    uint16_t spy = (uint16_t)((uint32_t)local_y * SPRITE_H / size);
+    uint16_t px = roms->sprites[(uint32_t)SPR_ICON_RFLOCK * SPRITE_PIXELS
+                                + (uint32_t)spy * SPRITE_W + spx];
+    if (px == 0) return fill;
+    return blend_rgb565_quarter(px, accent);
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -119,13 +167,13 @@ static uint16_t shade_status(uint16_t lx, uint16_t ly, uint16_t w,
     (void)w;
 
     // Frequency text in cols 4..4+12*16 = 4..196.
-    if (lx >= 4 && lx < 4 + 12 * 16 && ly < 32) {
+    if (lx >= 4 && lx < 4 + 12 * 16 && ly >= 3 && ly < 32) {
         char text[12];
         format_freq_mhz(ui->freq_hz, text);
         uint16_t col = (uint16_t)(lx - 4);
         uint8_t ch_idx = (uint8_t)(col / 16);
         uint8_t gx = (uint8_t)(col % 16);
-        return glyph_pixel_16x32(text[ch_idx], gx, (uint8_t)ly, fg, bg, roms);
+        return glyph_pixel_16x32(text[ch_idx], gx, (uint8_t)(ly - 3), fg, bg, roms);
     }
 
     // Larger RDS/radio-text line, visible only in FM mode.
@@ -151,7 +199,7 @@ static uint16_t shade_status(uint16_t lx, uint16_t ly, uint16_t w,
     }
 
     // Demod label at x=372..436 — four 16x32 glyphs ("FM", "AM", "GOES", "ADSB").
-    if (lx >= 372 && lx < 436 && ly < 32) {
+    if (lx >= 372 && lx < 436 && ly >= 3 && ly < 32) {
         const char *lbl = (ui->demod == DEMOD_AM)   ? "AM  "
                         : (ui->demod == DEMOD_GOES) ? "GOES"
                         : (ui->demod == DEMOD_ADSB) ? "ADSB"
@@ -160,8 +208,11 @@ static uint16_t shade_status(uint16_t lx, uint16_t ly, uint16_t w,
         uint8_t ch_idx = (uint8_t)(col / 16);
         if (ch_idx >= 4) return bg;
         uint8_t gx = (uint8_t)(col % 16);
-        return glyph_pixel_16x32(lbl[ch_idx], gx, (uint8_t)ly, fg, bg, roms);
+        return glyph_pixel_16x32(lbl[ch_idx], gx, (uint8_t)(ly - 3), fg, bg, roms);
     }
+
+    uint16_t with_lock = draw_link_lock_indicator(lx, ly, 444u, 3u, 28u, bg, ui, roms);
+    if (with_lock != bg) return with_lock;
 
     // Buttons.
     uint8_t btn_id;
@@ -178,6 +229,7 @@ static uint16_t shade_image_mode_button(uint16_t x, uint16_t y,
                                         uint16_t under) {
     uint8_t btn_id;
     if (!ui_layout_is_image(ui->layout)) return under;
+    under = draw_link_lock_indicator(x, y, 712u, 18u, 28u, under, ui, roms);
     if (!ui_button_hit(x, y, ui->layout, &btn_id)) return under;
     return draw_status_button(x, y, btn_id, RGB565(12, 18, 24), ui, roms);
 }

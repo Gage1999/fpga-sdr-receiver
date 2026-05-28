@@ -184,6 +184,7 @@ typedef enum : uint8_t {
 #define UI_FLAG_MUTE         (1u << 0)
 #define UI_FLAG_RECORD       (1u << 1)  // reserved; no visible record button
 #define UI_FLAG_TOUCH_ACTIVE (1u << 2)
+#define UI_FLAG_LINK_LOCK    (1u << 3)
 
 typedef struct __attribute__((packed)) {
     uint8_t  version;            // == UI_STATE_VERSION
@@ -297,7 +298,7 @@ uint16_t pixel_shader(uint16_t x, uint16_t y,
 ```
 
 Each `shade_*`:
-- `shade_status` — frequency text, large FM RDS text, demod label, centered volume bar, and 48×48 touch buttons via font + sprite ROM. The visible controls are tune up/down, volume up/down, mute, and mode; image modes hide the full status bar and expose only a floating MODE button.
+- `shade_status` — frequency text, large FM RDS text, demod label, centered volume bar, a compact link-lock indicator, and 48×48 touch buttons via font + sprite ROM. The visible controls are tune up/down, volume up/down, mute, and mode; image modes hide the full status bar and expose only floating MODE/link indicators.
 - `shade_spectrum` — `bin_idx = (x * 256) >> log2(r.w)` (powers of 2 only — flag div); `bar_top = r.h - (bins[bin_idx] * r.h >> 16)`; foreground if `y >= bar_top`.
 - `shade_overlay` — touch cursor crosshair if `flags & TOUCH_ACTIVE`, modal frames, focused-button border.
 
