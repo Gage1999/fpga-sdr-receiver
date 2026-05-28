@@ -199,6 +199,78 @@ def draw_glyph_into(px: list[int], glyph: list[str], ox: int, oy: int, color: in
                     px[y * SPRITE_W + x] = color
 
 
+def draw_mask_centered(px: list[int], glyph: list[str], color: int, scale: int = 3):
+    lit = [(r, c) for r, row in enumerate(glyph) for c, ch in enumerate(row) if ch == "#"]
+    if not lit:
+        return
+
+    min_r = min(r for r, _c in lit)
+    max_r = max(r for r, _c in lit)
+    min_c = min(c for _r, c in lit)
+    max_c = max(c for _r, c in lit)
+    w = (max_c - min_c + 1) * scale
+    h = (max_r - min_r + 1) * scale
+    ox = (SPRITE_W - w) // 2 - min_c * scale
+    oy = (SPRITE_H - h) // 2 - min_r * scale
+
+    for r, row in enumerate(glyph):
+        for c, ch in enumerate(row):
+            if ch != "#":
+                continue
+            for dy in range(scale):
+                for dx in range(scale):
+                    x = ox + c * scale + dx
+                    y = oy + r * scale + dy
+                    if 0 <= x < SPRITE_W and 0 <= y < SPRITE_H:
+                        px[y * SPRITE_W + x] = color
+
+
+def draw_dot(px: list[int], cx: int, cy: int, radius: int, color: int):
+    r2 = radius * radius
+    for y in range(cy - radius, cy + radius + 1):
+        for x in range(cx - radius, cx + radius + 1):
+            dx = x - cx
+            dy = y - cy
+            if dx * dx + dy * dy <= r2 and 0 <= x < SPRITE_W and 0 <= y < SPRITE_H:
+                px[y * SPRITE_W + x] = color
+
+
+def draw_line(px: list[int], x0: int, y0: int, x1: int, y1: int, radius: int, color: int):
+    steps = max(abs(x1 - x0), abs(y1 - y0))
+    if steps == 0:
+        draw_dot(px, x0, y0, radius, color)
+        return
+    for i in range(steps + 1):
+        t = i / steps
+        x = int(round(x0 + (x1 - x0) * t))
+        y = int(round(y0 + (y1 - y0) * t))
+        draw_dot(px, x, y, radius, color)
+
+
+def draw_mute_icon(px: list[int], icon_color: int):
+    slash = rgb565(255, 80, 80)
+
+    # Speaker body.
+    for y in range(13, 20):
+        for x in range(7, 12):
+            px[y * SPRITE_W + x] = icon_color
+
+    # Speaker cone, centered in the 32x32 sprite.
+    for y in range(8, 25):
+        if y < 12:
+            x0 = 20 - (y - 8) * 2
+        elif y <= 20:
+            x0 = 12
+        else:
+            x0 = 12 + (y - 20) * 2
+        for x in range(x0, 21):
+            if 0 <= x < SPRITE_W:
+                px[y * SPRITE_W + x] = icon_color
+
+    # Mute slash.
+    draw_line(px, 24, 8, 9, 24, 1, slash)
+
+
 # Compact ad-hoc 5x7 glyphs for icon labels.
 ICON_GLYPHS = {
     "UP":  [
@@ -323,22 +395,11 @@ ICON_GLYPHS = {
 
 def build_sprite(theme: tuple[int, int, int], label_key: str, label_color=(255, 255, 255)) -> list[int]:
     px = sprite_button_bg(theme, (theme[0] // 3, theme[1] // 3, theme[2] // 3))
-    glyph = ICON_GLYPHS[label_key]
-    glyph_w = len(glyph[0])
-    glyph_h = len(glyph)
-    ox = (SPRITE_W - glyph_w * 3) // 2
-    oy = (SPRITE_H - glyph_h * 3) // 2
     col = rgb565(*label_color)
-    # 3x scale for visibility
-    for r, row in enumerate(glyph):
-        for c, ch in enumerate(row):
-            if ch == "#":
-                for dy in range(3):
-                    for dx in range(3):
-                        x = ox + c * 3 + dx
-                        y = oy + r * 3 + dy
-                        if 0 <= x < SPRITE_W and 0 <= y < SPRITE_H:
-                            px[y * SPRITE_W + x] = col
+    if label_key == "MUTE":
+        draw_mute_icon(px, col)
+    else:
+        draw_mask_centered(px, ICON_GLYPHS[label_key], col)
     return px
 
 

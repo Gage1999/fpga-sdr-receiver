@@ -33,18 +33,20 @@ void fb_compose_waterfall_step(fb_t *fb,
 }
 
 void fb_compose_goes_row(fb_t *fb,
-                        uint8_t layout,
-                        uint16_t row_y_in_region,
-                        const uint8_t pixels[800],
-                        const uint16_t palette[256]) {
+                         uint8_t layout,
+                         uint16_t row_y_in_region,
+                         const uint8_t pixels[800],
+                         const uint16_t palette[256]) {
     region_t r = region_for_kind(R_GOES, layout);
     if (r.kind != R_GOES) return;
-    if (row_y_in_region >= r.h) return;
+    uint16_t image_w = r.h < r.w ? r.h : r.w;
+    if (image_w == 0 || row_y_in_region >= image_w) return;
 
     uint16_t scratch[SCREEN_W];
-    uint16_t n = r.w < SCREEN_W ? r.w : SCREEN_W;
+    uint16_t n = image_w < SCREEN_W ? image_w : SCREEN_W;
     for (uint16_t x = 0; x < n; x++) {
-        scratch[x] = palette[pixels[x]];
+        uint16_t src_x = (uint16_t)((uint32_t)x * 800u / image_w);
+        scratch[x] = palette[pixels[src_x]];
     }
     fb_write_row(fb, r.x0, (uint16_t)(r.y0 + row_y_in_region), scratch, n);
 }
@@ -202,6 +204,31 @@ static void adsb_text_shadow(fb_t *fb, region_t r, int32_t lx, int32_t ly,
     adsb_text(fb, r, lx, ly, s, color, font);
 }
 
+static void text16(fb_t *fb, region_t r, int32_t lx, int32_t ly,
+                   const char *s, uint16_t color, const uint16_t *font) {
+    for (int ci = 0; s[ci]; ci++) {
+        uint8_t idx = (uint8_t)s[ci];
+        if (idx < FONT_16X32_FIRST || idx >= FONT_16X32_FIRST + FONT_16X32_COUNT) idx = '?';
+        const uint16_t *glyph = &font[(uint32_t)(idx - FONT_16X32_FIRST) * FONT_16X32_H];
+        for (uint8_t gy = 0; gy < FONT_16X32_H; gy++) {
+            uint16_t row = glyph[gy];
+            for (uint8_t gx = 0; gx < 16; gx++) {
+                if (!(row & (uint16_t)(1u << (15 - gx)))) continue;
+                int32_t X = lx + ci * 16 + gx;
+                int32_t Y = ly + gy;
+                if (X < 0 || X >= (int32_t)r.w || Y < 0 || Y >= (int32_t)r.h) continue;
+                fb_write(fb, (uint16_t)(r.x0 + X), (uint16_t)(r.y0 + Y), color);
+            }
+        }
+    }
+}
+
+static void text16_shadow(fb_t *fb, region_t r, int32_t lx, int32_t ly,
+                          const char *s, uint16_t color, const uint16_t *font) {
+    text16(fb, r, (int32_t)(lx + 1), (int32_t)(ly + 1), s, ADSB_SHADOW, font);
+    text16(fb, r, lx, ly, s, color, font);
+}
+
 static void adsb_fill_rect(fb_t *fb, region_t r, int32_t lx, int32_t ly,
                            int32_t w, int32_t h, uint16_t color) {
     for (int32_t yy = 0; yy < h; yy++) {
@@ -213,6 +240,60 @@ static void adsb_fill_rect(fb_t *fb, region_t r, int32_t lx, int32_t ly,
             fb_write(fb, (uint16_t)(r.x0 + x), (uint16_t)(r.y0 + y), color);
         }
     }
+}
+
+void fb_compose_goes_panel(fb_t *fb,
+                           uint8_t layout,
+                           uint16_t row_y_in_region,
+                           const aux_roms_t *roms) {
+    region_t r = region_for_kind(R_GOES, layout);
+    if (r.kind != R_GOES || r.w <= r.h) return;
+
+    int32_t image_w = r.h;
+    int32_t panel_w = (int32_t)r.w - image_w;
+    int32_t panel_x = image_w;
+    uint16_t bg = RGB565(4, 8, 14);
+    uint16_t line = RGB565(54, 86, 110);
+    uint16_t fg = RGB565(228, 240, 250);
+    uint16_t accent = RGB565(112, 220, 255);
+    uint16_t warn = RGB565(255, 220, 110);
+
+    adsb_fill_rect(fb, r, panel_x, 0, panel_w, r.h, bg);
+    adsb_fill_rect(fb, r, panel_x, 0, 2, r.h, line);
+
+    char row_line[24];
+    char pct_line[24];
+    uint16_t row = (row_y_in_region < r.h) ? row_y_in_region : (uint16_t)(r.h - 1u);
+    uint16_t pct = (uint16_t)((uint32_t)(row + 1u) * 100u / r.h);
+    snprintf(row_line, sizeof(row_line), "ROW %03u", (unsigned)(row + 1u));
+    snprintf(pct_line, sizeof(pct_line), "FRAME %3u%%", (unsigned)pct);
+
+    text16_shadow(fb, r, panel_x + 18, 24, "GOES", fg, roms->font_16x32);
+    text16_shadow(fb, r, panel_x + 18, 84, row_line, accent, roms->font_16x32);
+    text16_shadow(fb, r, panel_x + 18, 128, pct_line, accent, roms->font_16x32);
+    text16_shadow(fb, r, panel_x + 18, 224, "HRIT SIM", fg, roms->font_16x32);
+    text16_shadow(fb, r, panel_x + 18, 264, "1694.1 MHZ", fg, roms->font_16x32);
+    text16_shadow(fb, r, panel_x + 18, 304, "TOP DOWN", fg, roms->font_16x32);
+    text16_shadow(fb, r, panel_x + 18, 370, "WAIT FRAME", warn, roms->font_16x32);
+    text16_shadow(fb, r, panel_x + 18, 410, "SYNC REAL RX", warn, roms->font_16x32);
+}
+
+static void adsb_ident_copy(const adsb_plane_t *p, uint8_t idx,
+                            char out[ADSB_IDENT_CHARS + 1u]) {
+    static const char *fallback[] = {
+        "N321UA", "N122SW", "N45AA", "N738DL", "N500Q", "N71CA",
+    };
+    if (p->ident[0]) {
+        uint8_t i = 0;
+        for (; i < ADSB_IDENT_CHARS && p->ident[i]; i++) out[i] = p->ident[i];
+        out[i] = '\0';
+        return;
+    }
+
+    const char *ident = fallback[idx % (sizeof(fallback) / sizeof(fallback[0]))];
+    uint8_t i = 0;
+    for (; i < ADSB_IDENT_CHARS && ident[i]; i++) out[i] = ident[i];
+    out[i] = '\0';
 }
 
 void fb_compose_adsb_frame(fb_t *fb,
@@ -236,12 +317,6 @@ void fb_compose_adsb_frame(fb_t *fb,
         }
         fb_write_row(fb, r.x0, (uint16_t)(r.y0 + ly), scratch, n);
     }
-
-    char count_line[24];
-    snprintf(count_line, sizeof(count_line), "%u ACFT  75 MI", (unsigned)n_planes);
-    adsb_fill_rect(fb, r, 0, 0, 144, 40, ADSB_HEADER_BG);
-    adsb_text_shadow(fb, r, 8, 4, "ADS-B UCR", ADSB_LABEL_C, roms->font_8x16);
-    adsb_text_shadow(fb, r, 8, 20, count_line, ADSB_HEADER_2, roms->font_8x16);
 
     // Labels: campus + range rings (distance in miles up the north axis).
     adsb_text_shadow(fb, r, ADSB_CX + 8,  ADSB_CY - 8,                "UCR",   ADSB_CENTER_C, roms->font_8x16);
@@ -269,5 +344,34 @@ void fb_compose_adsb_frame(fb_t *fb,
                 }
             }
         }
+
+        char label[24];
+        char ident[ADSB_IDENT_CHARS + 1u];
+        adsb_ident_copy(&planes[i], i, ident);
+        snprintf(label, sizeof(label), "%s %uFT", ident, (unsigned)planes[i].alt_ft);
+        int32_t tx = px + 8;
+        int32_t ty = py - 20;
+        if (ty < 0) ty = py + 8;
+        if (tx < 250 && ty < 88) ty = 88;
+        if (tx > (int32_t)r.w - 112) tx = px - 112;
+        if (tx < 0) tx = 0;
+        adsb_text_shadow(fb, r, tx, ty, label, ADSB_LABEL_C, roms->font_8x16);
     }
+
+    char count_line[24];
+    char primary_line[24];
+    snprintf(count_line, sizeof(count_line), "%u ACFT", (unsigned)n_planes);
+    if (n_planes > 0) {
+        char ident[ADSB_IDENT_CHARS + 1u];
+        adsb_ident_copy(&planes[0], 0, ident);
+        snprintf(primary_line, sizeof(primary_line), "%s %uKT",
+                 ident, (unsigned)planes[0].speed_kt);
+    } else {
+        snprintf(primary_line, sizeof(primary_line), "NO TRAFFIC");
+    }
+    adsb_fill_rect(fb, r, 0, 0, 246, 84, ADSB_HEADER_BG);
+    text16_shadow(fb, r, 8, 4, "ADS-B", ADSB_LABEL_C, roms->font_16x32);
+    text16_shadow(fb, r, 8, 40, count_line, ADSB_HEADER_2, roms->font_16x32);
+    adsb_text_shadow(fb, r, 128, 22, "UCR 75 MI", ADSB_LABEL_C, roms->font_8x16);
+    adsb_text_shadow(fb, r, 128, 46, primary_line, ADSB_HEADER_2, roms->font_8x16);
 }

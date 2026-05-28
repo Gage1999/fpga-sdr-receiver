@@ -175,7 +175,10 @@ Three primitive operations, each implemented as a small write-side FSM that subm
 ### 7b. `goes_row_write`
 - Input: 800-byte grayscale row, target Y in GOES region. A real decoder should
   derive target Y from frame/line sync or hold blank until it has sync.
-- Action: expand each grayscale byte to RGB565 (`val | val<<5 | val>>1` for green emphasis or via GOES palette), burst-write to SDRAM.
+- Action: downsample the incoming row into the 480×480 square image area,
+  expand each grayscale byte to RGB565 (`val | val<<5 | val>>1` for green
+  emphasis or via GOES palette), and leave the remaining 320 px for the side
+  status panel.
 - Frequency: 2 lines/sec from the satellite. Trivial.
 
 ### 7c. `region_clear`

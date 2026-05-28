@@ -65,10 +65,13 @@ T_CASE(region_clear_then_paint) {
 
 T_CASE(goes_row_write) {
     struct fb *fb = make_fb(0);
+    aux_roms_t roms;
+    aux_roms_default(&roms);
     uint8_t pixels[800];
     for (int x = 0; x < 800; x++) pixels[x] = (uint8_t)(x / 4);
     region_t r = region_for_kind(R_GOES, (uint8_t)LAYOUT_GOES_FULL);
     fb_compose_goes_row((fb_t *)fb, (uint8_t)LAYOUT_GOES_FULL, (uint16_t)(r.h / 2), pixels, palette_goes);
+    fb_compose_goes_panel((fb_t *)fb, (uint8_t)LAYOUT_GOES_FULL, (uint16_t)(r.h / 2), &roms);
 
     uint16_t *snap = (uint16_t *)calloc((size_t)SCREEN_W * SCREEN_H, sizeof(uint16_t));
     test_fb_snapshot_back(fb, snap);
@@ -82,7 +85,10 @@ T_CASE(adsb_frame_with_planes) {
     aux_roms_t roms;
     aux_roms_default(&roms);
     adsb_plane_t planes[4] = {
-        { 100, 60 }, { 400, 200 }, { 650, 350 }, { 770, 20 },
+        { 100, 60,  "N321UA", 3200, 128 },
+        { 400, 200, "N122SW", 5150, 142 },
+        { 650, 350, "N45AA",  7000, 168 },
+        { 770, 20,  "N738DL", 8900, 196 },
     };
     fb_compose_adsb_frame((fb_t *)fb, (uint8_t)LAYOUT_ADSB_FULL, planes, 4, &roms);
 

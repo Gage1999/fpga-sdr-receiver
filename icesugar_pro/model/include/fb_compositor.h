@@ -20,12 +20,20 @@ void fb_compose_waterfall_step(fb_t *fb,
                                const uint16_t palette[256]);
 
 // Writes one GOES row into the GOES region at row_y_in_region (0..region_h-1).
-// Pixels are 0..255 grayscale; the compositor expands through the GOES palette.
+// Pixels are 0..255 grayscale; the compositor expands through the GOES palette
+// and downsamples the source row into a square 480x480 image area.
 void fb_compose_goes_row(fb_t *fb,
-                        uint8_t layout,
-                        uint16_t row_y_in_region,
-                        const uint8_t pixels[800],
-                        const uint16_t palette[256]);
+                         uint8_t layout,
+                         uint16_t row_y_in_region,
+                         const uint8_t pixels[800],
+                         const uint16_t palette[256]);
+
+// Draws the GOES side panel that fills the horizontal space left by the square
+// image area.
+void fb_compose_goes_panel(fb_t *fb,
+                           uint8_t layout,
+                           uint16_t row_y_in_region,
+                           const aux_roms_t *roms);
 
 // Fill a rectangular region with a solid color. Used on layout change.
 void fb_compose_clear(fb_t *fb, region_t r, uint16_t color);
@@ -34,13 +42,13 @@ void fb_compose_clear(fb_t *fb, region_t r, uint16_t color);
 // ADS-B map mode.
 //
 // One tracked aircraft: position in region-local pixels (0..region_w-1,
-// 0..region_h-1). Real ADS-B carries lat/lon/altitude/callsign; the renderer
-// only needs a screen position, computed Pico-side from the decoded message —
-// projecting the aircraft's range/bearing from UCR (the region center) onto the
-// map at ADSB_RADIUS_MI = ADSB_R_OUTER px.
+// 0..region_h-1), plus the compact metadata the map labels need. The Zynq side
+// computes x/y by projecting decoded ADS-B positions from UCR (the region
+// center) onto the map at ADSB_RADIUS_MI = ADSB_R_OUTER px.
 // ──────────────────────────────────────────────────────────────────────────────
 
 #define ADSB_MAX_PLANES 16
+#define ADSB_IDENT_CHARS 8
 
 // Map scale: UCR campus is the region center; the outer range ring is the
 // nominal ADS-B reception radius. 75 mi maps to 224 px (half the 448-px height).
@@ -50,6 +58,9 @@ void fb_compose_clear(fb_t *fb, region_t r, uint16_t color);
 typedef struct {
     uint16_t x;
     uint16_t y;
+    char     ident[ADSB_IDENT_CHARS + 1u];  // 8-char tail/callsign + local NUL
+    uint16_t alt_ft;
+    uint16_t speed_kt;
 } adsb_plane_t;
 
 // Redraws the whole ADS-B region: the host model loads the tracked Riverside

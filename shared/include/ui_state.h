@@ -27,7 +27,6 @@ typedef enum : uint8_t {
 #define UI_FLAG_MUTE         (1u << 0)
 #define UI_FLAG_RECORD       (1u << 1)
 #define UI_FLAG_TOUCH_ACTIVE (1u << 2)
-#define UI_FLAG_LINK_LOCK    (1u << 3)
 
 #define UI_BTN_NONE      0xFFu
 #define UI_BTN_FREQ_UP   0u

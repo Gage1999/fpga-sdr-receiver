@@ -184,7 +184,6 @@ typedef enum : uint8_t {
 #define UI_FLAG_MUTE         (1u << 0)
 #define UI_FLAG_RECORD       (1u << 1)  // reserved; no visible record button
 #define UI_FLAG_TOUCH_ACTIVE (1u << 2)
-#define UI_FLAG_LINK_LOCK    (1u << 3)
 
 typedef struct __attribute__((packed)) {
     uint8_t  version;            // == UI_STATE_VERSION
@@ -266,7 +265,7 @@ typedef uint16_t pixel_t;
 | status | (0,0) | 800×64 | shader | live (FM/AM only) |
 | spectrum | (0,64) | 800×128 | shader | live (from `spectrum_bins`) |
 | waterfall | (0,192) | 800×288 | compositor | framebuffer |
-| goes_full | (0,0) | 800×480 | compositor | framebuffer (in `LAYOUT_GOES_FULL`) |
+| goes_full | (0,0) | 800×480 | compositor | 480×480 image + 320×480 stats panel (in `LAYOUT_GOES_FULL`) |
 | adsb_full | (0,0) | 800×480 | compositor | framebuffer (in `LAYOUT_ADSB_FULL`) |
 | overlay | varies | varies | shader | live (modal, cursor) |
 
@@ -298,7 +297,7 @@ uint16_t pixel_shader(uint16_t x, uint16_t y,
 ```
 
 Each `shade_*`:
-- `shade_status` — frequency text, large FM RDS text, demod label, centered volume bar, a compact link-lock indicator, and 48×48 touch buttons via font + sprite ROM. The visible controls are tune up/down, volume up/down, mute, and mode; image modes hide the full status bar and expose only floating MODE/link indicators.
+- `shade_status` — frequency text, large FM RDS text, demod label, centered volume bar, and 48×48 touch buttons via font + sprite ROM. The mode button uses large two-character labels (`FM`, `AM`, `GO`, `AD`) instead of small pictograms. The visible controls are tune up/down, volume up/down, mute, and mode; image modes hide the full status bar and expose only a floating MODE button.
 - `shade_spectrum` — `bin_idx = (x * 256) >> log2(r.w)` (powers of 2 only — flag div); `bar_top = r.h - (bins[bin_idx] * r.h >> 16)`; foreground if `y >= bar_top`.
 - `shade_overlay` — touch cursor crosshair if `flags & TOUCH_ACTIVE`, modal frames, focused-button border.
 
@@ -310,18 +309,32 @@ The narrow primitives that the FPGA implements as write-side FSMs (arch doc §7)
 
 ```c
 void fb_compose_waterfall_step(fb_t *fb,
+                               uint8_t layout,
                                const uint8_t magnitudes[800],
                                const uint16_t palette[256]);
 
-void fb_compose_goes_row(fb_t *fb, uint16_t row_y_in_region,
-                        const uint8_t pixels[800]);
+void fb_compose_goes_row(fb_t *fb, uint8_t layout,
+                         uint16_t row_y_in_region,
+                         const uint8_t pixels[800],
+                         const uint16_t palette[256]);
+
+void fb_compose_goes_panel(fb_t *fb, uint8_t layout,
+                           uint16_t row_y_in_region,
+                           const aux_roms_t *roms);
 
 void fb_compose_clear(fb_t *fb, region_t r, uint16_t color);
 
-// ADS-B map: darkened static basemap + range rings, compact status header,
-// labels, and one high-contrast marker per aircraft. Slow-update, so no back
-// buffer. The real version blits a Riverside map-image ROM; the fallback is
-// procedural.
+// ADS-B map: darkened static basemap + range rings, enlarged status header,
+// aircraft identifiers/altitude labels, and one high-contrast marker per
+// aircraft. Slow-update, so no back buffer. The real version blits a Riverside
+// map-image ROM; the fallback is procedural.
+typedef struct {
+    uint16_t x, y;
+    char     ident[9];  // 8-byte tail/callsign plus local NUL terminator
+    uint16_t alt_ft;
+    uint16_t speed_kt;
+} adsb_plane_t;
+
 void fb_compose_adsb_frame(fb_t *fb, uint8_t layout,
                            const adsb_plane_t *planes, uint8_t n_planes);
 ```

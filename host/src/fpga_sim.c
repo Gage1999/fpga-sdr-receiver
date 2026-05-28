@@ -96,6 +96,9 @@ void fpga_sim_tick(fpga_sim_t *s, uint16_t *pixels_out) {
             s->goes_next_row = (uint16_t)((s->goes_next_row + 1u) % r.h);
         }
     }
+    if (s->shadow_front.layout == LAYOUT_GOES_FULL) {
+        fb_compose_goes_panel(&s->fb, s->shadow_front.layout, s->goes_next_row, &s->roms);
+    }
 
     // ADS-B map: the FPGA single-buffers this (slow update, no tearing risk),
     // but the host FB double-buffers and swaps every frame, so recompose each
