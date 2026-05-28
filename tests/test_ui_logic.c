@@ -79,15 +79,42 @@ T_CASE(mute_toggles) {
     return 0;
 }
 
-T_CASE(layout_cycles_through_all) {
+// The page is no longer an independent control: cycling the mode drives the
+// layout in lockstep so demod and page can never mismatch.
+T_CASE(layout_follows_demod) {
     mock_reset();
     ui_logic_t L; ui_logic_init(&L);
-    uint8_t l0 = L.curr.layout;
-    for (unsigned i = 0; i < LAYOUT_COUNT; i++) { push_tap(UI_BTN_LAYOUT); ui_logic_tick(&L); }
-    T_EXPECT_EQ(L.curr.layout, l0);
-    // One short of a full cycle must land somewhere else.
-    push_tap(UI_BTN_LAYOUT); ui_logic_tick(&L);
-    T_EXPECT(L.curr.layout != l0);
+    T_EXPECT_EQ(L.curr.demod, (uint8_t)DEMOD_FM);
+    T_EXPECT_EQ(L.curr.layout, (uint8_t)LAYOUT_SPECTRUM_ONLY);
+
+    push_tap(UI_BTN_MODE); ui_logic_tick(&L);   // AM still shares the spectrum page
+    T_EXPECT_EQ(L.curr.demod, (uint8_t)DEMOD_AM);
+    T_EXPECT_EQ(L.curr.layout, (uint8_t)LAYOUT_SPECTRUM_ONLY);
+
+    push_tap(UI_BTN_MODE); ui_logic_tick(&L);   // GOES → full-screen image page
+    T_EXPECT_EQ(L.curr.demod, (uint8_t)DEMOD_GOES);
+    T_EXPECT_EQ(L.curr.layout, (uint8_t)LAYOUT_GOES_FULL);
+
+    push_tap(UI_BTN_MODE); ui_logic_tick(&L);   // ADS-B → full-screen map page
+    T_EXPECT_EQ(L.curr.demod, (uint8_t)DEMOD_ADSB);
+    T_EXPECT_EQ(L.curr.layout, (uint8_t)LAYOUT_ADSB_FULL);
+    return 0;
+}
+
+// Frequency and span are inert on the image pages — only the FM/AM spectrum
+// page tunes.
+T_CASE(tuning_gated_to_spectrum_page) {
+    mock_reset();
+    ui_logic_t L; ui_logic_init(&L);
+    push_tap(UI_BTN_MODE); push_tap(UI_BTN_MODE); ui_logic_tick(&L);  // FM → AM → GOES
+    T_EXPECT_EQ(L.curr.layout, (uint8_t)LAYOUT_GOES_FULL);
+
+    uint32_t f0 = L.curr.freq_hz;
+    uint16_t s0 = L.curr.span_hz_log2;
+    push_tap(UI_BTN_FREQ_UP); ui_logic_tick(&L);
+    push_event(0, TOUCH_SWIPE_L); ui_logic_tick(&L);
+    T_EXPECT_EQ((long long)L.curr.freq_hz, (long long)f0);
+    T_EXPECT_EQ(L.curr.span_hz_log2, s0);
     return 0;
 }
 
@@ -256,7 +283,8 @@ T_CASE(sync_cadence_full_then_partials) {
 int main(void) {
     T_RUN(freq_up_5_taps);
     T_RUN(mute_toggles);
-    T_RUN(layout_cycles_through_all);
+    T_RUN(layout_follows_demod);
+    T_RUN(tuning_gated_to_spectrum_page);
     T_RUN(volume_clamps_at_0_and_100);
     T_RUN(touch_down_then_drag_off_button_cancels);
     T_RUN(spi_emits_full_state_first);

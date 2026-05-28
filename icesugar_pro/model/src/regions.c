@@ -18,19 +18,15 @@ region_t region_for_kind(uint8_t kind, uint8_t layout) {
 
     case R_WATERFALL:
         if (layout == LAYOUT_GOES_FULL || layout == LAYOUT_ADSB_FULL) return make_region(R_NONE, 0, 0, 0, 0);
-        if (layout == LAYOUT_SPECTRUM_ONLY) {
-            return make_region(R_WATERFALL, 0, STATUS_H + SPECTRUM_H,
-                               SCREEN_W, SCREEN_H - STATUS_H - SPECTRUM_H);
-        }
-        return make_region(R_WATERFALL, 0, STATUS_H + SPECTRUM_H, SCREEN_W, WATERFALL_H);
+        // FM layout draws the spectrum on top and lets the waterfall fill the
+        // rest of the screen. There's no FM+GOES split: FM and GOES can't run at
+        // once (single RX LO).
+        return make_region(R_WATERFALL, 0, STATUS_H + SPECTRUM_H,
+                           SCREEN_W, SCREEN_H - STATUS_H - SPECTRUM_H);
 
     case R_GOES:
         if (layout == LAYOUT_GOES_FULL) {
             return make_region(R_GOES, 0, STATUS_H, SCREEN_W, GOES_FULL_H);
-        }
-        if (layout == LAYOUT_SPLIT) {
-            return make_region(R_GOES, 0, STATUS_H + SPECTRUM_H + WATERFALL_H,
-                               SCREEN_W, GOES_STRIP_H);
         }
         return make_region(R_NONE, 0, 0, 0, 0);
 

@@ -177,9 +177,8 @@ Constraints:
 typedef enum : uint8_t { DEMOD_FM=0, DEMOD_AM=1, DEMOD_GOES=2, DEMOD_ADSB=3 } demod_mode_t;
 typedef enum : uint8_t {
     LAYOUT_SPECTRUM_ONLY = 0,
-    LAYOUT_SPLIT         = 1,
-    LAYOUT_GOES_FULL     = 2,
-    LAYOUT_ADSB_FULL     = 3,   // full-screen ADS-B map
+    LAYOUT_GOES_FULL     = 1,
+    LAYOUT_ADSB_FULL     = 2,   // full-screen ADS-B map
 } layout_t;
 
 #define UI_FLAG_MUTE         (1u << 0)
