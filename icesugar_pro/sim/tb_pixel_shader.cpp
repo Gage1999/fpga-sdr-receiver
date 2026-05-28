@@ -162,6 +162,28 @@ int main(int argc, char **argv) {
         total_pix   += r.total;
         total_match += r.matched;
     }
+    {
+        // GOES image layout: full-screen FB pass-through plus a floating MODE
+        // button. Surfaces the still-stubbed shade_image_mode_button path.
+        ui_state_t ui; ui_state_default(&ui);
+        ui.demod  = DEMOD_GOES;
+        ui.layout = LAYOUT_GOES_FULL;
+        Result r = run_case("goes_layout", &ui, RGB565(8, 12, 18));
+        total_pix   += r.total;
+        total_match += r.matched;
+    }
+    {
+        // ADS-B image layout: floating MODE + ZOOM_IN + ZOOM_OUT buttons. Same
+        // story — full match outside the buttons; SV will be wrong inside them
+        // until shade_image_mode_button lands.
+        ui_state_t ui; ui_state_default(&ui);
+        ui.demod        = DEMOD_ADSB;
+        ui.layout       = LAYOUT_ADSB_FULL;
+        ui.adsb_range_mi = 75;
+        Result r = run_case("adsb_layout", &ui, RGB565(8, 12, 18));
+        total_pix   += r.total;
+        total_match += r.matched;
+    }
 
     double pct = 100.0 * static_cast<double>(total_match) / static_cast<double>(total_pix);
     std::printf("\noverall: %zu / %zu (%6.2f%%)\n", total_match, total_pix, pct);
