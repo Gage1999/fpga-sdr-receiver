@@ -23,8 +23,6 @@ typedef struct {
 
 #define STATUS_H     32
 #define SPECTRUM_H   128
-#define WATERFALL_H  240
-#define GOES_STRIP_H  80
 #define GOES_FULL_H   448
 #define ADSB_FULL_H   448  // full-screen ADS-B map, same envelope as GOES_FULL
 

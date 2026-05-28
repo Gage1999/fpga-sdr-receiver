@@ -47,7 +47,6 @@ static uint8_t status_btn_sprite(uint8_t btn, const ui_state_t *ui) {
         // TODO: dedicated plane icon for ADS-B; reuse the SAT icon for now.
         if (ui->demod == DEMOD_ADSB) return SPR_ICON_SAT;
         return SPR_BTN_MODE_FM;
-    case UI_BTN_LAYOUT:  return SPR_BTN_LAYOUT;
     case UI_BTN_RECORD:  return (ui->flags & UI_FLAG_RECORD) ? SPR_BTN_REC_ON : SPR_BTN_REC;
     case UI_BTN_MUTE:    return (ui->flags & UI_FLAG_MUTE)   ? SPR_BTN_MUTE_ON : SPR_BTN_MUTE;
     default:             return SPR_ICON_BLANK;
@@ -112,7 +111,7 @@ static void format_freq_mhz(uint32_t freq_hz, char out[12]) {
 }
 
 // Status bar layout: " NNN.NN MHz" using 16x32 font at the left.
-// Volume bar in the middle. Eight 32x32 buttons packed to the right.
+// Volume bar in the middle. Seven 32x32 buttons packed to the right.
 static uint16_t shade_status(uint16_t lx, uint16_t ly, uint16_t w,
                              const ui_state_t *ui, const aux_roms_t *roms) {
     const uint16_t bg = RGB565(20, 24, 32);

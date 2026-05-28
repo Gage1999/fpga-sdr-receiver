@@ -18,12 +18,11 @@ typedef enum : uint8_t {
 
 typedef enum : uint8_t {
     LAYOUT_SPECTRUM_ONLY = 0,
-    LAYOUT_SPLIT         = 1,
-    LAYOUT_GOES_FULL     = 2,
-    LAYOUT_ADSB_FULL     = 3,
+    LAYOUT_GOES_FULL     = 1,
+    LAYOUT_ADSB_FULL     = 2,
 } layout_t;
 
-#define LAYOUT_COUNT 4u
+#define LAYOUT_COUNT 3u
 
 #define UI_FLAG_MUTE         (1u << 0)
 #define UI_FLAG_RECORD       (1u << 1)
@@ -35,10 +34,9 @@ typedef enum : uint8_t {
 #define UI_BTN_VOL_UP    2u
 #define UI_BTN_VOL_DN    3u
 #define UI_BTN_MODE      4u
-#define UI_BTN_LAYOUT    5u
-#define UI_BTN_RECORD    6u
-#define UI_BTN_MUTE      7u
-#define UI_BTN_COUNT     8u
+#define UI_BTN_RECORD    5u
+#define UI_BTN_MUTE      6u
+#define UI_BTN_COUNT     7u
 
 #define UI_SPECTRUM_BINS 256
 
@@ -62,5 +60,10 @@ typedef struct __attribute__((packed)) {
 _Static_assert(sizeof(ui_state_t) <= 1024, "ui_state_t exceeds 1KB shadow RAM budget");
 
 void ui_state_default(ui_state_t *st);
+
+// Derives the page/layout from the active demod mode. Only one mode runs at a
+// time (single RX LO), so the page always matches the mode: FM and AM share the
+// spectrum+waterfall page; GOES and ADS-B each own a full-screen page.
+uint8_t ui_layout_for_demod(uint8_t demod);
 
 #endif

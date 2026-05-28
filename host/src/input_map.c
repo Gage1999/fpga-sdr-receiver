@@ -67,9 +67,9 @@ bool input_map_translate(const SDL_Event *e,
         case SDLK_2:
         case SDLK_3:
         case SDLK_4:
-            // Tap the layout button (cycles spectrum / split / GOES / ADS-B);
+            // Tap the mode button (cycles FM / AM / GOES / ADS-B; page follows);
             // caller decides how many taps to send.
-            ev->x = (uint16_t)status_btn_center_x(UI_BTN_LAYOUT); ev->y = 16; ev->kind = TOUCH_TAP; return true;
+            ev->x = (uint16_t)status_btn_center_x(UI_BTN_MODE); ev->y = 16; ev->kind = TOUCH_TAP; return true;
         default: break;
         }
         break;

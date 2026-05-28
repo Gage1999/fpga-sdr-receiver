@@ -85,13 +85,26 @@ static uint32_t emit_state(ui_logic_t *L) {
 // Action handlers. Pure mutation of L->curr. Wire emission deferred to end.
 // ──────────────────────────────────────────────────────────────────────────────
 
+// Switches the active mode and snaps the page to match — they move together
+// because only one mode can run at a time (single RX LO).
+static void set_demod(ui_logic_t *L, uint8_t demod) {
+    L->curr.demod = demod;
+    L->curr.layout = ui_layout_for_demod(demod);
+}
+
+// Frequency/span controls only make sense on the FM/AM spectrum page; the
+// image modes (GOES, ADS-B) ignore them.
+static int on_spectrum_page(const ui_logic_t *L) {
+    return L->curr.layout == LAYOUT_SPECTRUM_ONLY;
+}
+
 static void action_button_press(ui_logic_t *L, uint8_t btn) {
     switch (btn) {
     case UI_BTN_FREQ_UP:
-        L->curr.freq_hz += FREQ_STEP_BIG;
+        if (on_spectrum_page(L)) L->curr.freq_hz += FREQ_STEP_BIG;
         break;
     case UI_BTN_FREQ_DN:
-        if (L->curr.freq_hz >= FREQ_STEP_BIG) L->curr.freq_hz -= FREQ_STEP_BIG;
+        if (on_spectrum_page(L) && L->curr.freq_hz >= FREQ_STEP_BIG) L->curr.freq_hz -= FREQ_STEP_BIG;
         break;
     case UI_BTN_VOL_UP:
         L->curr.volume = (uint8_t)((L->curr.volume + VOL_STEP > 100) ? 100 : L->curr.volume + VOL_STEP);
@@ -100,10 +113,7 @@ static void action_button_press(ui_logic_t *L, uint8_t btn) {
         L->curr.volume = (uint8_t)((L->curr.volume < VOL_STEP) ? 0 : L->curr.volume - VOL_STEP);
         break;
     case UI_BTN_MODE:
-        L->curr.demod = (uint8_t)((L->curr.demod + 1) % DEMOD_COUNT);
-        break;
-    case UI_BTN_LAYOUT:
-        L->curr.layout = (uint8_t)((L->curr.layout + 1) % LAYOUT_COUNT);
+        set_demod(L, (uint8_t)((L->curr.demod + 1) % DEMOD_COUNT));
         break;
     case UI_BTN_RECORD:
         L->curr.flags ^= UI_FLAG_RECORD;
@@ -158,15 +168,15 @@ static void handle_touch(ui_logic_t *L, const touch_event_t *ev) {
     case TOUCH_LONG: {
         // Long-press on RECORD jumps right to GOES mode (placeholder gesture).
         uint8_t btn = hit_button(ev->x, ev->y);
-        if (btn == UI_BTN_RECORD) L->curr.demod = (uint8_t)DEMOD_GOES;
+        if (btn == UI_BTN_RECORD) set_demod(L, (uint8_t)DEMOD_GOES);
         break;
     }
     case TOUCH_SWIPE_L: {
-        if (L->curr.span_hz_log2 < 24) L->curr.span_hz_log2++;
+        if (on_spectrum_page(L) && L->curr.span_hz_log2 < 24) L->curr.span_hz_log2++;
         break;
     }
     case TOUCH_SWIPE_R: {
-        if (L->curr.span_hz_log2 > 8) L->curr.span_hz_log2--;
+        if (on_spectrum_page(L) && L->curr.span_hz_log2 > 8) L->curr.span_hz_log2--;
         break;
     }
     default: break;

@@ -28,7 +28,7 @@ T_CASE(waterfall_one_step) {
     uint8_t mags[800];
     for (int x = 0; x < 800; x++) mags[x] = (uint8_t)(x & 0xFF);
 
-    fb_compose_waterfall_step((fb_t *)fb, (uint8_t)LAYOUT_SPLIT, mags, palette_waterfall);
+    fb_compose_waterfall_step((fb_t *)fb, (uint8_t)LAYOUT_SPECTRUM_ONLY, mags, palette_waterfall);
 
     uint16_t *snap = (uint16_t *)calloc((size_t)SCREEN_W * SCREEN_H, sizeof(uint16_t));
     test_fb_snapshot_back(fb, snap);
@@ -42,7 +42,7 @@ T_CASE(waterfall_three_steps_distinct_rows) {
     uint8_t mags[800];
     for (int step = 0; step < 3; step++) {
         for (int x = 0; x < 800; x++) mags[x] = (uint8_t)((x + step * 50) & 0xFF);
-        fb_compose_waterfall_step((fb_t *)fb, (uint8_t)LAYOUT_SPLIT, mags, palette_waterfall);
+        fb_compose_waterfall_step((fb_t *)fb, (uint8_t)LAYOUT_SPECTRUM_ONLY, mags, palette_waterfall);
     }
     uint16_t *snap = (uint16_t *)calloc((size_t)SCREEN_W * SCREEN_H, sizeof(uint16_t));
     test_fb_snapshot_back(fb, snap);
@@ -53,7 +53,7 @@ T_CASE(waterfall_three_steps_distinct_rows) {
 
 T_CASE(region_clear_then_paint) {
     struct fb *fb = make_fb(RGB565(255, 0, 0));
-    region_t r = region_for_kind(R_WATERFALL, (uint8_t)LAYOUT_SPLIT);
+    region_t r = region_for_kind(R_WATERFALL, (uint8_t)LAYOUT_SPECTRUM_ONLY);
     fb_compose_clear((fb_t *)fb, r, RGB565(0, 255, 0));
 
     uint16_t *snap = (uint16_t *)calloc((size_t)SCREEN_W * SCREEN_H, sizeof(uint16_t));
@@ -67,8 +67,8 @@ T_CASE(goes_row_write) {
     struct fb *fb = make_fb(0);
     uint8_t pixels[800];
     for (int x = 0; x < 800; x++) pixels[x] = (uint8_t)(x / 4);
-    region_t r = region_for_kind(R_GOES, (uint8_t)LAYOUT_SPLIT);
-    fb_compose_goes_row((fb_t *)fb, (uint8_t)LAYOUT_SPLIT, (uint16_t)(r.h / 2), pixels, palette_goes);
+    region_t r = region_for_kind(R_GOES, (uint8_t)LAYOUT_GOES_FULL);
+    fb_compose_goes_row((fb_t *)fb, (uint8_t)LAYOUT_GOES_FULL, (uint16_t)(r.h / 2), pixels, palette_goes);
 
     uint16_t *snap = (uint16_t *)calloc((size_t)SCREEN_W * SCREEN_H, sizeof(uint16_t));
     test_fb_snapshot_back(fb, snap);
