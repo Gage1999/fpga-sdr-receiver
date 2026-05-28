@@ -304,16 +304,17 @@ static void fb_compose_adsb_header(fb_t *fb,
                                    const adsb_plane_t *planes,
                                    uint8_t n_planes,
                                    const aux_roms_t *roms) {
-    char count_line[24];
-    char primary_line[24];
-    snprintf(count_line, sizeof(count_line), "%u ACFT", (unsigned)n_planes);
+    char count_line[16];
+    char ident_line[ADSB_IDENT_CHARS + 1u];
+    char speed_line[16];
+    uint8_t visible_planes = n_planes > 99u ? 99u : n_planes;
+    snprintf(count_line, sizeof(count_line), "%02u ACFT", (unsigned)visible_planes);
     if (n_planes > 0) {
-        char ident[ADSB_IDENT_CHARS + 1u];
-        adsb_ident_copy(&planes[0], 0, ident);
-        snprintf(primary_line, sizeof(primary_line), "%s %uKT",
-                 ident, (unsigned)planes[0].speed_kt);
+        adsb_ident_copy(&planes[0], 0, ident_line);
+        snprintf(speed_line, sizeof(speed_line), "%uKT", (unsigned)planes[0].speed_kt);
     } else {
-        snprintf(primary_line, sizeof(primary_line), "NO TRAFFIC");
+        snprintf(ident_line, sizeof(ident_line), "NO ACFT");
+        snprintf(speed_line, sizeof(speed_line), "---KT");
     }
 
     adsb_fill_rect(fb, r, 0, 0, r.w, ADSB_HEADER_H, ADSB_HEADER_BG);
@@ -323,8 +324,9 @@ static void fb_compose_adsb_header(fb_t *fb,
     text16_shadow(fb, r, 372, 3, "ADSB", ADSB_HEADER_FG, roms->font_16x32);
 
     text16_shadow(fb, r, 4, 32, count_line, ADSB_HEADER_2, roms->font_16x32);
-    adsb_text_shadow(fb, r, 128, 40, "UCR 75 MI", ADSB_HEADER_DIM, roms->font_8x16);
-    adsb_text_shadow(fb, r, 240, 40, primary_line, ADSB_HEADER_DIM, roms->font_8x16);
+    text16_shadow(fb, r, 136, 32, "75 MI", ADSB_HEADER_DIM, roms->font_16x32);
+    text16_shadow(fb, r, 256, 32, ident_line, ADSB_HEADER_DIM, roms->font_16x32);
+    text16_shadow(fb, r, 384, 32, speed_line, ADSB_HEADER_DIM, roms->font_16x32);
 }
 
 void fb_compose_adsb_frame(fb_t *fb,
