@@ -14,8 +14,10 @@ describes *how far in we are*.
 | Thing | Status |
 |---|---|
 | C reference model (`icesugar_pro/model/`) | Refactored: precompute split out from per-pixel path. All 5 golden tests pass. |
-| `pixel_shader.sv` (Verilator sim) | **Full parity, 6/6 cases at 100% (2,304,000 / 2,304,000 px)** |
-| Existing FM bitstream (`top.sv`) | Builds clean. LUT 15% / FF 10% / BRAM 87.5% / IO 14%. Timing has 2.5× headroom. |
+| `pixel_shader.sv` (now in `icesugar_pro/src/`) | **Full parity, 6/6 cases at 100% (2,304,000 / 2,304,000 px)** — both bare core and end-to-end through the wrapper. |
+| Shader memories + wrapper (`font_16x32_rom`, `sprite_rom`, `spectrum_bin_ram`, `pixel_shader_top`) | **Done.** Synthesizable; yosys `synth_ecp5` clean (no latches/warnings). Shader is now a self-contained block, no loose ROM ports. |
+| Existing FM bitstream (`top.sv`) | Builds clean (re-verified with oss-cad-suite). DP16KD 49/56 (87.5%) · LUT 3714/24288 (15%) · FF 2392 (9%) · IO 28/197 (14%). All clocks PASS. |
+| FPGA toolchain | **Installed** at `~/oss-cad-suite` (release 2026-05-28): yosys 0.65, nextpnr-ecp5 0.10, ecppack 1.4. Verilator 5.020 via apt. |
 | `scan_timing.sv` extracted from `lcd.sv` | Done. Same bitstream output, +73 LUTs (module-boundary overhead). |
 | Partner's `sdram_ctrl.sv` (origin/main) | First commit landed (`b0b1aa2`). Single-client interface, request/grant style. See *open issues* below. |
 | Pico firmware (`pico2w/`) | Skeleton only. `ui_logic.c` validated, but touch/SPI HAL and main loop are stubs. |
@@ -56,6 +58,64 @@ Commits in order, all on `main`:
 
 ---
 
+## This session — synthesizable shader block + budget verification
+
+The shader was parity-correct but still a *harness artifact*: `pixel_shader.sv`
+exposed raw ROM address/data ports backed by C arrays in the testbench. This
+session turned it into a self-contained, synthesizable hardware block and
+verified resource budget on the real ECP5 toolchain.
+
+**Done:**
+
+- **Moved** `pixel_shader.sv` `sim/` → `src/` (it is RTL; one source of truth,
+  now compiled by both the parity harness and synthesis).
+- **`src/font_16x32_rom.sv`** (#11) — flat async ROM, 3072×16, `(* ram_style =
+  "logic" *)`, `$readmemh build/font_16x32.mem`.
+- **`src/sprite_rom.sv`** (#7) — flat async ROM, 16384×16.
+- **`src/spectrum_bin_ram.sv`** — 256×16 dual-port (clocked write / async read).
+- **`src/pixel_shader_top.sv`** — synthesizable wrapper wiring the shader to all
+  three memories. This is the block `top.sv` instantiates at #18.
+- **Build/verify:** `tools/rom_to_mem.py` already emits all ROMs. New Verilator
+  harnesses (`tb_pixel_shader_top.cpp` end-to-end, `tb_rom_check.cpp`
+  `.mem`-vs-C). `make synth_shader` (yosys) added. Fixed a `_Static_assert`
+  GCC-vs-clang portability gap that blocked the harness on Linux.
+
+**Verified green (real tools — Verilator 5.020 + oss-cad-suite 2026-05-28):**
+
+- C goldens 6/6 · bare shader parity 6/6 (2.3M px) · **wrapper end-to-end parity
+  6/6 with real `.mem` ROMs + spectrum RAM** · ROM equivalence exact
+  (3072/3072 + 16384/16384) · `verilator --lint-only -Wall` clean · `yosys
+  synth_ecp5` clean (no latches/warnings).
+
+### Budget (assuming framebuffers/waterfall move to SDRAM)
+
+Measured, not estimated. Baseline `top.bit` reproduces 49/56 DP16KD (45 =
+waterfall `u_wf`, 4 = FFT ping-pong).
+
+The shader's async-read ROMs (the current parity-faithful form) **can't** map to
+EBR — EBR read is synchronous — so yosys maps them to logic/distributed RAM:
+
+| Memory | Current async form | #18 sync-read EBR form (measured) |
+|---|---|---|
+| `font_16x32_rom` | LUT logic (ram_style=logic) | **3** DP16KD |
+| `sprite_rom` | LUT logic (sparse → folds small) | **15** DP16KD (full 16 sprites) |
+| `spectrum_bin_ram` | `TRELLIS_DPR16X4` distributed LUTRAM ✓ | **1** DP16KD |
+| **shader total** | **0 DP16KD**, ~2.6k LUT4, 32 DPR16X4, 3 DSP, ~0 FF | **19 DP16KD** |
+
+**Projected integrated budget** (baseline − waterfall + shader, sync-EBR form):
+
+`49 − 45 (waterfall→SDRAM) + 19 (shader) ≈ 23 / 56 DP16KD (41%)` — comfortably
+within budget, ~33 blocks free. LUT/FF/DSP all well under 50%. **Within budget.**
+
+Note the `sprite_rom` async form folds cheaply *only because* most of the 16
+sprite slots are still blank; fill them in and the async-LUT cost grows. The
+sync-read EBR form (15 DP16KD) is flat regardless of contents — so #18 should
+register the ROM reads (arch §9 "1-cycle ROM-lookup pipeline"), which both fixes
+this and meets pixel-clock timing. `spectrum_bin_ram` already verified to map to
+distributed LUTRAM (`TRELLIS_DPR16X4`), as arch §5/§9 assumed.
+
+---
+
 ## What's next
 
 Prioritized list. Anything in P1/P2/P3 is independent of the SDRAM
@@ -66,11 +126,11 @@ controller working — they can be done while partner iterates on
 All complete. ✅
 
 ### P2 — Build out the shader integration surface
-- **#7 `sprite_rom.sv` + .mem generation** — mirror the
-  `font8x16_rom.sv` pattern. Used by the sprite-backed buttons. Arch doc
-  §5 budgets 11 EBR blocks; fits comfortably once waterfall moves to SDRAM.
-- **#11 `font_16x32_rom.sv` + .mem** — same pattern. Add
-  `(* ram_style = "logic" *)` to push to FFs (~3k FFs instead of 3 BRAMs).
+- **#7 `sprite_rom.sv` + .mem generation** — ✅ **Done.** Flat async ROM,
+  16384×16, mirrors `font8x16_rom.sv`. Sync-read EBR form measured at 15
+  DP16KD (full 16 sprites).
+- **#11 `font_16x32_rom.sv` + .mem** — ✅ **Done.** Flat async ROM, 3072×16,
+  `(* ram_style = "logic" *)`. Sync-read EBR form = 3 DP16KD.
 - **#12 UI state shadow SV** — 1KB double-buffered EBR per arch doc §8.
   Pico SPI writes back buffer; shader reads front buffer; flip at V-sync.
   Needs an opcode parser front-end for `OP_FULL_STATE` /
@@ -183,18 +243,24 @@ the board in hand. Not blocking any FPGA-side work.
 ```sh
 # C model still passes goldens
 cd <repo root>
-cmake --build build
-ctest --test-dir build --output-on-failure
+cmake -S . -B build -DBUILD_HOST_HARNESS=OFF && cmake --build build
+ctest --test-dir build --output-on-failure        # 6/6 expected
 
-# Verilator parity harness (6 cases, 100% expected)
+# Verilator: bare-core parity + end-to-end wrapper parity + ROM .mem-vs-C
 cd icesugar_pro/sim
-make run
+make run        # run_shader 6/6 100%, run_top 6/6 100%, run_rom PASS
+make lint       # verilator --lint-only -Wall on the synthesizable hierarchy
 
-# Bitstream still builds
-cd ../..  # back to icesugar_pro/
+# FPGA toolchain
 source ~/oss-cad-suite/environment    # or: fpga (the user's alias)
+
+# Existing FM bitstream still builds
+cd ..           # icesugar_pro/
 make build/top.bit
-# Expect: ~49/56 DP16KD, ~3776 LUTs, all clocks PASS
+# Expect: 49/56 DP16KD, 3714 LUTs, FF 2392, all clocks PASS
+
+# Shader block synthesizes clean + area check
+make synth_shader     # yosys synth_ecp5 -> build/shader.json (+ build/shader_synth.log)
 ```
 
 If any of these regress, something landed on `main` that shouldn't have.
@@ -203,7 +269,24 @@ canary for the C model.
 
 ---
 
-## Files touched this session
+## Files touched — synthesizable shader block (this session)
+
+```
+icesugar_pro/src/pixel_shader.sv             (moved from sim/ — single source of truth)
+icesugar_pro/src/font_16x32_rom.sv           (new — #11, flat async ROM 3072x16)
+icesugar_pro/src/sprite_rom.sv               (new — #7, flat async ROM 16384x16)
+icesugar_pro/src/spectrum_bin_ram.sv         (new — 256x16 dual-port, clocked wr / async rd)
+icesugar_pro/src/pixel_shader_top.sv         (new — synthesizable wrapper: shader + 3 memories)
+icesugar_pro/Makefile                        (modified — added synth_shader target)
+icesugar_pro/sim/Makefile                    (modified — 3 harnesses + lint + mem gen; _Static_assert fix)
+icesugar_pro/sim/.gitignore                  (modified — obj_shader/ obj_top/ obj_rom/ build/)
+icesugar_pro/sim/rom_check_top.sv            (new — test-only top for ROM sweep)
+icesugar_pro/sim/tb_pixel_shader_top.cpp     (new — end-to-end wrapper parity vs C)
+icesugar_pro/sim/tb_rom_check.cpp            (new — .mem-vs-C ROM equivalence sweep)
+docs/fpga-shader-handoff.md                  (modified — this update)
+```
+
+## Files touched — shader translation (earlier session)
 
 ```
 icesugar_pro/model/include/pixel_shader.h    (modified — added shader_state_t)
@@ -211,9 +294,7 @@ icesugar_pro/model/src/pixel_shader.c        (modified — split prepare / pixel
 icesugar_pro/src/scan_timing.sv              (new — extracted from lcd.sv)
 icesugar_pro/src/lcd.sv                      (modified — uses scan_timing)
 icesugar_pro/Makefile                        (modified — added scan_timing.sv)
-icesugar_pro/sim/.gitignore                  (new)
 icesugar_pro/sim/Makefile                    (new — Verilator parity build)
-icesugar_pro/sim/pixel_shader.sv             (new — SV translation of pixel_shader)
 icesugar_pro/sim/tb_pixel_shader.cpp         (new — C++ parity testbench)
 tests/test_pixel_shader.c                    (modified — calls prepare)
 host/src/fpga_sim.c                          (modified — calls prepare)
@@ -224,12 +305,22 @@ docs/fpga-shader-handoff.md                  (new — this doc)
 
 ## Recommended next move
 
-#7 + #11 together — both are mechanical `font8x16_rom.sv`-pattern
-modules with associated `rom_to_mem.py` updates. ~1 session.
+#7 + #11 + the spectrum RAM + the `pixel_shader_top` wrapper are done — the
+shader is a complete synthesizable block and the budget is verified. The next
+meaty piece is **#12 (UI state shadow + SPI opcode parser)**, which feeds the
+wrapper's prepared-state ports and unblocks everything from #18.
 
-Then #12 (UI state shadow + SPI opcode parser) is the next meaty
-piece — needs more design thought (double-buffer flip timing,
-back-buffer write coherence) but unblocks everything from #18.
+#12 has a real design fork to settle first: **who runs
+`pixel_shader_prepare()`?** The wire protocol (`wire_pack_full`) currently sends
+raw `ui_state_t` (freq_hz, volume, rds_text, …), but the wrapper's inputs are
+the *prepared* fields (freq_text, label origins, volume_fill_px, …). Either:
+  (a) the **Pico** runs `prepare()` and the shadow stores prepared state (small
+      FPGA-side shadow, but changes the SPI contract / Pico firmware), or
+  (b) the **FPGA** stores raw `ui_state` and a small V-blank "prepare engine"
+      computes the derived fields in hardware (keeps the contract, but
+      `format_freq_mhz` division + the `label_origin` glyph scan become gateware).
+Decide this before writing #12.
 
-Anything beyond that needs at least the mock SDRAM (#13) so #14/#15
-can be developed against it.
+Anything beyond that needs at least the mock SDRAM (#13) so #14/#15 can be
+developed against it. At #18, register the ROM reads (sync-read EBR, arch §9) —
+the budget table above uses that form.

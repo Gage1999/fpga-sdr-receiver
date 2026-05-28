@@ -129,6 +129,24 @@ sim_sdram: tests/sdram_ctrl_tb.sv src/sdram_ctrl.sv | build
 	iverilog -g2012 -o build/sdram_ctrl.sim tests/sdram_ctrl_tb.sv src/sdram_ctrl.sv
 	vvp build/sdram_ctrl.sim
 
+# ── Standalone synthesis of the pixel-shader block (budget / clean-build check).
+#    Not yet wired into top.sv — that is integration #18, blocked on the SDRAM
+#    stack. This measures the shader's area in isolation against the EBR/LUT
+#    budget now. font_16x32.mem + sprite_rom.mem come from the rom_to_mem rule
+#    below (build/font_8x16.mem), which emits every ROM in one pass.
+SHADER_SRCS = src/pixel_shader_top.sv \
+              src/pixel_shader.sv \
+              src/font_16x32_rom.sv \
+              src/sprite_rom.sv \
+              src/spectrum_bin_ram.sv
+
+.PHONY: synth_shader
+synth_shader: build/shader.json
+
+build/shader.json: $(SHADER_SRCS) build/font_8x16.mem | build
+	yosys -l build/shader_synth.log \
+	    -p "synth_ecp5 -top pixel_shader_top -json $@" $(SHADER_SRCS)
+
 build:
 	mkdir -p build
 
