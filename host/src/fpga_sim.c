@@ -96,6 +96,9 @@ void fpga_sim_tick(fpga_sim_t *s, uint16_t *pixels_out) {
             s->goes_next_row = (uint16_t)((s->goes_next_row + 1u) % r.h);
         }
     }
+    if (s->shadow_front.layout == LAYOUT_GOES_FULL) {
+        fb_compose_goes_panel(&s->fb, s->shadow_front.layout, s->goes_next_row, &s->roms);
+    }
 
     // ADS-B map: the FPGA single-buffers this (slow update, no tearing risk),
     // but the host FB double-buffers and swaps every frame, so recompose each
@@ -105,7 +108,8 @@ void fpga_sim_tick(fpga_sim_t *s, uint16_t *pixels_out) {
         adsb_plane_t planes[ADSB_MAX_PLANES];
         uint8_t np = synth_adsb_planes(planes, ADSB_MAX_PLANES);
         (void)synth_adsb_dirty();
-        fb_compose_adsb_frame(&s->fb, s->shadow_front.layout, planes, np, &s->roms);
+        fb_compose_adsb_frame(&s->fb, s->shadow_front.layout, planes, np,
+                              s->shadow_front.adsb_range_mi, &s->roms);
     }
 
     // Scan-out: render the full screen via the pixel shader.

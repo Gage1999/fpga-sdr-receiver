@@ -19,10 +19,11 @@ void ui_state_default(ui_state_t *st) {
     st->freq_hz       = 100000000u;  // 100 MHz
     st->span_hz_log2  = 17;          // 128 kHz span
     st->squelch       = 20;
-    st->flags         = UI_FLAG_LINK_LOCK;
+    st->flags         = 0;
     st->touch_x       = 0;
     st->touch_y       = 0;
     st->active_button = UI_BTN_NONE;
     st->brightness    = 80;
+    st->adsb_range_mi = 75;
     st->rds_text[0]   = '\0';
 }

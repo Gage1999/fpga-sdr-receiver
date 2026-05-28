@@ -6,6 +6,7 @@
 
 bool input_map_translate(const SDL_Event *e,
                          int mouse_x, int mouse_y,
+                         uint8_t layout,
                          touch_event_t *ev) {
     switch (e->type) {
     case SDL_MOUSEBUTTONDOWN:
@@ -41,11 +42,21 @@ bool input_map_translate(const SDL_Event *e,
         case SDLK_RIGHT:
             ev->x = SCREEN_W / 2; ev->y = 100; ev->kind = TOUCH_SWIPE_R; return true;
         case SDLK_UP:
+            if (layout != (uint8_t)LAYOUT_SPECTRUM_ONLY) return false;
             ev->x = ui_button_cx(UI_BTN_FREQ_UP); ev->y = ui_button_cy(); ev->kind = TOUCH_TAP; return true;
         case SDLK_DOWN:
+            if (layout != (uint8_t)LAYOUT_SPECTRUM_ONLY) return false;
             ev->x = ui_button_cx(UI_BTN_FREQ_DN); ev->y = ui_button_cy(); ev->kind = TOUCH_TAP; return true;
         case SDLK_m:
+            if (layout != (uint8_t)LAYOUT_SPECTRUM_ONLY) return false;
             ev->x = ui_button_cx(UI_BTN_MUTE); ev->y = ui_button_cy(); ev->kind = TOUCH_TAP; return true;
+        case SDLK_EQUALS:
+        case SDLK_PLUS:
+            if (layout != (uint8_t)LAYOUT_ADSB_FULL) return false;
+            ev->x = ui_button_cx(UI_BTN_ZOOM_IN); ev->y = ui_button_cy(); ev->kind = TOUCH_TAP; return true;
+        case SDLK_MINUS:
+            if (layout != (uint8_t)LAYOUT_ADSB_FULL) return false;
+            ev->x = ui_button_cx(UI_BTN_ZOOM_OUT); ev->y = ui_button_cy(); ev->kind = TOUCH_TAP; return true;
         case SDLK_l:
             ev->x = (uint16_t)mouse_x; ev->y = (uint16_t)mouse_y; ev->kind = TOUCH_LONG; return true;
         case SDLK_SPACE:

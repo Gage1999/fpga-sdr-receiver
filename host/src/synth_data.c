@@ -100,6 +100,9 @@ void synth_rds_text(char *out, uint8_t out_cap) {
 }
 
 uint8_t synth_adsb_planes(adsb_plane_t *out, uint8_t max) {
+    static const char *idents[] = {
+        "N321UA", "N122SW", "N45AA", "N738DL", "N500Q", "N71CA",
+    };
     uint8_t n = (ADSB_PLANE_COUNT < max) ? (uint8_t)ADSB_PLANE_COUNT : max;
     for (uint8_t i = 0; i < n; i++) {
         // Deterministic start spread out across the map, each with a fixed
@@ -114,6 +117,13 @@ uint8_t synth_adsb_planes(adsb_plane_t *out, uint8_t max) {
         y = ((y % ADSB_REGION_H) + ADSB_REGION_H) % ADSB_REGION_H;
         out[i].x = (uint16_t)x;
         out[i].y = (uint16_t)y;
+        memset(out[i].ident, 0, sizeof(out[i].ident));
+        const char *ident = idents[i % (sizeof(idents) / sizeof(idents[0]))];
+        for (uint8_t c = 0; c + 1u < sizeof(out[i].ident) && ident[c]; c++) {
+            out[i].ident[c] = ident[c];
+        }
+        out[i].alt_ft = (uint16_t)(2400u + (uint16_t)i * 1850u);
+        out[i].speed_kt = (uint16_t)(118u + (uint16_t)i * 17u);
     }
     return n;
 }

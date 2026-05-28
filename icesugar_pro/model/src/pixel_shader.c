@@ -19,31 +19,114 @@ static uint8_t status_btn_sprite(uint8_t btn, const ui_state_t *ui) {
     case UI_BTN_FREQ_DN: return SPR_BTN_FREQ_DN;
     case UI_BTN_VOL_UP:  return SPR_BTN_VOL_UP;
     case UI_BTN_VOL_DN:  return SPR_BTN_VOL_DN;
-    case UI_BTN_MODE:
-        if (ui->demod == DEMOD_AM)   return SPR_BTN_MODE_AM;
-        if (ui->demod == DEMOD_GOES) return SPR_BTN_MODE_GOES;
-        // TODO: dedicated plane icon for ADS-B; reuse the SAT icon for now.
-        if (ui->demod == DEMOD_ADSB) return SPR_ICON_SAT;
-        return SPR_BTN_MODE_FM;
     case UI_BTN_MUTE:    return (ui->flags & UI_FLAG_MUTE)   ? SPR_BTN_MUTE_ON : SPR_BTN_MUTE;
     default:             return SPR_ICON_BLANK;
     }
 }
 
-static uint16_t blend_rgb565_quarter(uint16_t base, uint16_t tint) {
-    uint16_t r = (uint16_t)((3u * RGB565_R(base) + RGB565_R(tint)) >> 2);
-    uint16_t g = (uint16_t)((3u * RGB565_G(base) + RGB565_G(tint)) >> 2);
-    uint16_t b = (uint16_t)((3u * RGB565_B(base) + RGB565_B(tint)) >> 2);
+static uint16_t brighten_rgb565(uint16_t px, uint8_t add) {
+    uint8_t r = (uint8_t)RGB565_R(px);
+    uint8_t g = (uint8_t)RGB565_G(px);
+    uint8_t b = (uint8_t)RGB565_B(px);
+    r = (uint8_t)((r + add > 255) ? 255 : r + add);
+    g = (uint8_t)((g + add > 255) ? 255 : g + add);
+    b = (uint8_t)((b + add > 255) ? 255 : b + add);
     return RGB565(r, g, b);
 }
 
-static uint16_t mode_button_accent(const ui_state_t *ui) {
+static const char *mode_button_label(const ui_state_t *ui) {
     switch (ui->demod) {
-    case DEMOD_AM:   return RGB565(255, 185, 70);
-    case DEMOD_GOES: return RGB565(80, 220, 255);
-    case DEMOD_ADSB: return RGB565(255, 110, 210);
-    default:         return RGB565(80, 230, 140);
+    case DEMOD_AM:   return "AM";
+    case DEMOD_GOES: return "GO";
+    case DEMOD_ADSB: return "AD";
+    default:         return "FM";
     }
+}
+
+static uint16_t font16_row_for(const aux_roms_t *roms, char c, uint8_t gy) {
+    uint8_t idx = (uint8_t)c;
+    if (idx < FONT_16X32_FIRST || idx >= FONT_16X32_FIRST + FONT_16X32_COUNT) idx = '?';
+    return roms->font_16x32[(uint32_t)(idx - FONT_16X32_FIRST) * FONT_16X32_H + gy];
+}
+
+static uint8_t label_ink(const char *label, uint8_t label_chars,
+                         int32_t rel_x, int32_t rel_y,
+                         const aux_roms_t *roms) {
+    if (rel_x < 0 || rel_x >= (int32_t)label_chars * FONT_16X32_W ||
+        rel_y < 0 || rel_y >= FONT_16X32_H) return 0u;
+
+    uint8_t ch_idx = (uint8_t)(rel_x / FONT_16X32_W);
+    uint8_t gx = (uint8_t)(rel_x % FONT_16X32_W);
+    uint8_t gy = (uint8_t)rel_y;
+    uint16_t row = font16_row_for(roms, label[ch_idx], gy);
+    return (row & (uint16_t)(1u << (15 - gx))) != 0;
+}
+
+static void label_origin(const char *label, uint8_t label_chars,
+                         const aux_roms_t *roms,
+                         int32_t *out_x, int32_t *out_y) {
+    int32_t min_x = (int32_t)label_chars * FONT_16X32_W;
+    int32_t min_y = FONT_16X32_H;
+    int32_t max_x = -1;
+    int32_t max_y = -1;
+
+    for (int32_t y = 0; y < FONT_16X32_H; y++) {
+        for (int32_t x = 0; x < (int32_t)label_chars * FONT_16X32_W; x++) {
+            if (!label_ink(label, label_chars, x, y, roms)) continue;
+            if (x < min_x) min_x = x;
+            if (x > max_x) max_x = x;
+            if (y < min_y) min_y = y;
+            if (y > max_y) max_y = y;
+        }
+    }
+
+    if (max_x < 0 || max_y < 0) {
+        *out_x = 8;
+        *out_y = 8;
+        return;
+    }
+
+    int32_t ink_w = max_x - min_x + 1;
+    int32_t ink_h = max_y - min_y + 1;
+    *out_x = ((int32_t)UI_STATUS_BTN_W - ink_w) / 2 - min_x;
+    *out_y = ((int32_t)UI_STATUS_BTN_W - ink_h) / 2 - min_y;
+}
+
+static uint16_t draw_text_button(uint16_t local_x, uint16_t local_y,
+                                 uint16_t bg, const char *label,
+                                 uint8_t label_chars, uint8_t active,
+                                 const aux_roms_t *roms) {
+    const uint16_t fill = RGB565(24, 32, 42);
+    const uint16_t edge = RGB565(156, 184, 204);
+    const uint16_t fg = RGB565(245, 252, 255);
+    uint16_t px = fill;
+
+    if (local_x == 0 || local_y == 0 ||
+        local_x == UI_STATUS_BTN_W - 1u || local_y == UI_STATUS_BTN_W - 1u) {
+        px = edge;
+    } else if (local_x < 3 || local_y < 3 ||
+               local_x >= UI_STATUS_BTN_W - 3u || local_y >= UI_STATUS_BTN_W - 3u) {
+        px = RGB565(48, 60, 74);
+    }
+
+    int32_t text_x;
+    int32_t text_y;
+    label_origin(label, label_chars, roms, &text_x, &text_y);
+    if (label_ink(label, label_chars,
+                  (int32_t)local_x - text_x,
+                  (int32_t)local_y - text_y,
+                  roms)) px = fg;
+
+    if (active && px != bg) px = brighten_rgb565(px, 48u);
+    return px;
+}
+
+static uint16_t draw_mode_button(uint16_t local_x, uint16_t local_y,
+                                 uint16_t bg,
+                                 const ui_state_t *ui,
+                                 const aux_roms_t *roms) {
+    return draw_text_button(local_x, local_y, bg, mode_button_label(ui), 2u,
+                            ui->active_button == UI_BTN_MODE, roms);
 }
 
 static uint16_t draw_status_button(uint16_t lx, uint16_t ly,
@@ -59,12 +142,15 @@ static uint16_t draw_status_button(uint16_t lx, uint16_t ly,
     uint16_t local_x = (uint16_t)(lx - x0);
     uint16_t local_y = (uint16_t)(ly - y0);
     if (btn_id == UI_BTN_MODE) {
-        uint16_t accent = mode_button_accent(ui);
-        if (local_x < 3 || local_y < 3 ||
-            local_x >= UI_STATUS_BTN_W - 3u || local_y >= UI_STATUS_BTN_W - 3u) {
-            return accent;
-        }
-        bg = blend_rgb565_quarter(bg, accent);
+        return draw_mode_button(local_x, local_y, bg, ui, roms);
+    }
+    if (btn_id == UI_BTN_ZOOM_IN) {
+        return draw_text_button(local_x, local_y, bg, "+", 1u,
+                                ui->active_button == UI_BTN_ZOOM_IN, roms);
+    }
+    if (btn_id == UI_BTN_ZOOM_OUT) {
+        return draw_text_button(local_x, local_y, bg, "-", 1u,
+                                ui->active_button == UI_BTN_ZOOM_OUT, roms);
     }
 
     uint16_t spx = (uint16_t)((uint32_t)local_x * SPRITE_W / UI_STATUS_BTN_W);
@@ -73,39 +159,8 @@ static uint16_t draw_status_button(uint16_t lx, uint16_t ly,
     uint16_t px = roms->sprites[(uint32_t)sprite_id * SPRITE_PIXELS
                                 + (uint32_t)spy * SPRITE_W + spx];
     if (px == 0) return bg;
-    if (btn_id == UI_BTN_MODE) px = blend_rgb565_quarter(px, mode_button_accent(ui));
-    if (btn_id == ui->active_button) {
-        uint8_t r = (uint8_t)RGB565_R(px);
-        uint8_t g = (uint8_t)RGB565_G(px);
-        uint8_t b = (uint8_t)RGB565_B(px);
-        r = (uint8_t)((r + 80 > 255) ? 255 : r + 80);
-        g = (uint8_t)((g + 80 > 255) ? 255 : g + 80);
-        b = (uint8_t)((b + 80 > 255) ? 255 : b + 80);
-        return RGB565(r, g, b);
-    }
+    if (btn_id == ui->active_button) return brighten_rgb565(px, 80u);
     return px;
-}
-
-static uint16_t draw_link_lock_indicator(uint16_t lx, uint16_t ly,
-                                         uint16_t x0, uint16_t y0, uint16_t size,
-                                         uint16_t bg,
-                                         const ui_state_t *ui,
-                                         const aux_roms_t *roms) {
-    if (lx < x0 || lx >= x0 + size || ly < y0 || ly >= y0 + size) return bg;
-
-    uint16_t local_x = (uint16_t)(lx - x0);
-    uint16_t local_y = (uint16_t)(ly - y0);
-    uint16_t locked = (ui->flags & UI_FLAG_LINK_LOCK) != 0;
-    uint16_t accent = locked ? RGB565(80, 230, 140) : RGB565(255, 190, 70);
-    uint16_t fill = locked ? RGB565(12, 36, 30) : RGB565(42, 28, 10);
-    if (local_x == 0 || local_y == 0 || local_x == size - 1u || local_y == size - 1u) return accent;
-
-    uint16_t spx = (uint16_t)((uint32_t)local_x * SPRITE_W / size);
-    uint16_t spy = (uint16_t)((uint32_t)local_y * SPRITE_H / size);
-    uint16_t px = roms->sprites[(uint32_t)SPR_ICON_RFLOCK * SPRITE_PIXELS
-                                + (uint32_t)spy * SPRITE_W + spx];
-    if (px == 0) return fill;
-    return blend_rgb565_quarter(px, accent);
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -118,7 +173,7 @@ static uint16_t glyph_pixel_16x32(char c, uint8_t gx, uint8_t gy,
                                   const aux_roms_t *roms) {
     uint8_t idx = (uint8_t)c;
     if (idx < FONT_16X32_FIRST || idx >= FONT_16X32_FIRST + FONT_16X32_COUNT) idx = '?';
-    uint16_t row = roms->font_16x32[(uint32_t)(idx - FONT_16X32_FIRST) * FONT_16X32_H + gy];
+    uint16_t row = font16_row_for(roms, (char)idx, gy);
     uint16_t bit = (uint16_t)(1u << (15 - gx));
     return (row & bit) ? color : bg;
 }
@@ -211,9 +266,6 @@ static uint16_t shade_status(uint16_t lx, uint16_t ly, uint16_t w,
         return glyph_pixel_16x32(lbl[ch_idx], gx, (uint8_t)(ly - 3), fg, bg, roms);
     }
 
-    uint16_t with_lock = draw_link_lock_indicator(lx, ly, 444u, 3u, 28u, bg, ui, roms);
-    if (with_lock != bg) return with_lock;
-
     // Buttons.
     uint8_t btn_id;
     if (ui_button_hit(lx, ly, ui->layout, &btn_id)) {
@@ -229,7 +281,6 @@ static uint16_t shade_image_mode_button(uint16_t x, uint16_t y,
                                         uint16_t under) {
     uint8_t btn_id;
     if (!ui_layout_is_image(ui->layout)) return under;
-    under = draw_link_lock_indicator(x, y, 712u, 18u, 28u, under, ui, roms);
     if (!ui_button_hit(x, y, ui->layout, &btn_id)) return under;
     return draw_status_button(x, y, btn_id, RGB565(12, 18, 24), ui, roms);
 }

@@ -21,6 +21,12 @@
 #define FREQ_STEP_SMALL 10000u   // 10 kHz
 #define VOL_STEP 5u
 
+static uint8_t adsb_range_clamp(uint8_t range_mi) {
+    if (range_mi <= 25u) return 25u;
+    if (range_mi <= 50u) return 50u;
+    return 75u;
+}
+
 // Returns UI_BTN_NONE if outside any button.
 static uint8_t hit_button(const ui_logic_t *L, uint16_t x, uint16_t y) {
     uint8_t btn = UI_BTN_NONE;
@@ -77,12 +83,17 @@ static uint32_t emit_state(ui_logic_t *L) {
 static void set_demod(ui_logic_t *L, uint8_t demod) {
     L->curr.demod = demod;
     L->curr.layout = ui_layout_for_demod(demod);
+    L->curr.adsb_range_mi = adsb_range_clamp(L->curr.adsb_range_mi);
 }
 
 // Frequency/span controls only make sense on the FM/AM spectrum page; the
 // image modes (GOES, ADS-B) ignore them.
 static int on_spectrum_page(const ui_logic_t *L) {
     return L->curr.layout == LAYOUT_SPECTRUM_ONLY;
+}
+
+static int on_adsb_page(const ui_logic_t *L) {
+    return L->curr.layout == LAYOUT_ADSB_FULL;
 }
 
 static void action_button_press(ui_logic_t *L, uint8_t btn) {
@@ -104,6 +115,18 @@ static void action_button_press(ui_logic_t *L, uint8_t btn) {
         break;
     case UI_BTN_MUTE:
         L->curr.flags ^= UI_FLAG_MUTE;
+        break;
+    case UI_BTN_ZOOM_IN:
+        if (on_adsb_page(L)) {
+            if (L->curr.adsb_range_mi > 50u) L->curr.adsb_range_mi = 50u;
+            else L->curr.adsb_range_mi = 25u;
+        }
+        break;
+    case UI_BTN_ZOOM_OUT:
+        if (on_adsb_page(L)) {
+            if (L->curr.adsb_range_mi < 50u) L->curr.adsb_range_mi = 50u;
+            else L->curr.adsb_range_mi = 75u;
+        }
         break;
     default: break;
     }

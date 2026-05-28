@@ -32,7 +32,7 @@ add_library(shared STATIC
 )
 target_include_directories(shared PUBLIC shared/include)
 target_compile_definitions(shared PUBLIC
-    UI_STATE_VERSION=2
+    UI_STATE_VERSION=3
 )
 
 # ──────────────────────────────────────────────────────────────────────────────

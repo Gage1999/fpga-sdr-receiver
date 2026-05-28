@@ -29,8 +29,8 @@ uint16_t synth_goes_row_index(uint16_t region_h);
 // real station metadata.
 void synth_rds_text(char *out, uint8_t out_cap);
 
-// Mock ADS-B traffic: fills up to `max` aircraft positions in ADSB_FULL
-// region-local pixels and returns the count. Deterministic given the seed.
+// Mock ADS-B traffic: fills up to `max` aircraft positions and metadata in
+// ADSB_FULL region-local pixels and returns the count. Deterministic by seed.
 uint8_t synth_adsb_planes(adsb_plane_t *out, uint8_t max);
 
 // Advances the slow ADS-B clock; true a couple of times/sec when the plane
