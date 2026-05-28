@@ -49,6 +49,7 @@ void fpga_sim_init(fpga_sim_t *s) {
     ui_state_default(&s->shadow_front);
     aux_roms_default(&s->roms);
     s->last_layout = s->shadow_front.layout;
+    s->goes_next_row = 0;
     g_ring_len = 0;
     touch_queue_init(&g_fpga_touchq);
 }
@@ -72,6 +73,10 @@ void fpga_sim_tick(fpga_sim_t *s, uint16_t *pixels_out) {
     if (s->shadow_front.layout != s->last_layout) {
         fb_host_clear(&s->fb, 0);
         s->last_layout = s->shadow_front.layout;
+        region_t goes_r = region_for_kind(R_GOES, s->shadow_front.layout);
+        s->goes_next_row = (goes_r.kind == R_GOES)
+                          ? synth_goes_row_index(goes_r.h)
+                          : 0;
     }
 
     // Compositor side: synth_data is the stand-in for the Zynq DSP feed.
@@ -81,19 +86,14 @@ void fpga_sim_tick(fpga_sim_t *s, uint16_t *pixels_out) {
 
     uint8_t goes[800];
     if (synth_goes_row_ready(goes)) {
-        // Append at bottom of GOES region by scrolling the existing rows up.
-        // Cheap host approximation: write at row_y = region.h - 1; emulator
-        // doesn't model the scroll-pointer scheme, just like waterfall — see
-        // the FPGA-side note in fb_compositor.c.
+        // Satellite image lines arrive with image/frame position. Fill that
+        // stream top-down and wrap after the frame; entering mid-frame starts at
+        // the current source row instead of forcing the next line to row 0.
         region_t r = region_for_kind(R_GOES, s->shadow_front.layout);
         if (r.kind == R_GOES && r.h > 0) {
-            for (uint16_t y = (uint16_t)(r.y0 + 1); y < r.y0 + r.h; y++) {
-                for (uint16_t x = r.x0; x < r.x0 + r.w; x++) {
-                    fb_write(&s->fb, x, (uint16_t)(y - 1), fb_read(&s->fb, x, y));
-                }
-            }
             fb_compose_goes_row(&s->fb, s->shadow_front.layout,
-                               (uint16_t)(r.h - 1), goes, palette_goes);
+                                s->goes_next_row, goes, palette_goes);
+            s->goes_next_row = (uint16_t)((s->goes_next_row + 1u) % r.h);
         }
     }
 

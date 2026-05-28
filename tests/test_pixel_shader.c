@@ -70,14 +70,14 @@ T_CASE(touch_overlay) {
     return 0;
 }
 
-T_CASE(record_button_lit) {
+T_CASE(mute_button_lit) {
     ui_state_t ui; ui_state_default(&ui);
-    ui.flags |= UI_FLAG_RECORD;
-    ui.active_button = UI_BTN_RECORD;
+    ui.flags |= UI_FLAG_MUTE;
+    ui.active_button = UI_BTN_MUTE;
     struct fb *fb = make_fb(0);
     uint16_t *px = (uint16_t *)calloc((size_t)SCREEN_W * SCREEN_H, sizeof(uint16_t));
     render_full(px, &ui, fb);
-    T_EXPECT_EQ(check_golden("shader_record_active", px, SCREEN_W, SCREEN_H), 0);
+    T_EXPECT_EQ(check_golden("shader_mute_active", px, SCREEN_W, SCREEN_H), 0);
     free(px); free(fb);
     return 0;
 }
@@ -90,6 +90,6 @@ int main(int argc, char **argv) {
     T_RUN(default_state_renders);
     T_RUN(spectrum_with_bars);
     T_RUN(touch_overlay);
-    T_RUN(record_button_lit);
+    T_RUN(mute_button_lit);
     T_FINISH();
 }

@@ -9,6 +9,7 @@
 #include "screen_config.h"
 #include "test_helpers.h"
 #include "touch.h"
+#include "ui_controls.h"
 #include "ui_logic.h"
 #include "ui_state.h"
 
@@ -33,13 +34,8 @@ static void mock_reset(void) {
     touch_queue_init(&g_mock_q);
 }
 
-#define STATUS_BTN_W 32
-#define STATUS_BTN_GAP 4
-static uint16_t btn_x0(uint8_t id) {
-    return (uint16_t)(SCREEN_W - (uint16_t)(id + 1) * (STATUS_BTN_W + STATUS_BTN_GAP));
-}
-static uint16_t btn_cx(uint8_t id) { return (uint16_t)(btn_x0(id) + STATUS_BTN_W / 2); }
-static uint16_t btn_cy(void)       { return 16; }
+static uint16_t btn_cx(uint8_t id) { return ui_button_cx(id); }
+static uint16_t btn_cy(void)       { return ui_button_cy(); }
 
 static void push_tap(uint8_t btn) {
     touch_event_t ev = { .x = btn_cx(btn), .y = btn_cy(), .kind = TOUCH_TAP };
@@ -118,6 +114,22 @@ T_CASE(tuning_gated_to_spectrum_page) {
     return 0;
 }
 
+T_CASE(image_pages_only_expose_mode_button) {
+    mock_reset();
+    ui_logic_t L; ui_logic_init(&L);
+    push_tap(UI_BTN_MODE); push_tap(UI_BTN_MODE); ui_logic_tick(&L);  // FM -> AM -> GOES
+    T_EXPECT_EQ(L.curr.layout, (uint8_t)LAYOUT_GOES_FULL);
+
+    uint8_t vol0 = L.curr.volume;
+    push_tap(UI_BTN_VOL_UP); ui_logic_tick(&L);
+    T_EXPECT_EQ(L.curr.volume, vol0);
+
+    push_tap(UI_BTN_MODE); ui_logic_tick(&L);
+    T_EXPECT_EQ(L.curr.demod, (uint8_t)DEMOD_ADSB);
+    T_EXPECT_EQ(L.curr.layout, (uint8_t)LAYOUT_ADSB_FULL);
+    return 0;
+}
+
 T_CASE(volume_clamps_at_0_and_100) {
     mock_reset();
     ui_logic_t L; ui_logic_init(&L);
@@ -182,17 +194,6 @@ T_CASE(mode_cycles_demod) {
     return 0;
 }
 
-T_CASE(record_toggles) {
-    mock_reset();
-    ui_logic_t L; ui_logic_init(&L);
-    T_EXPECT_EQ((L.curr.flags & UI_FLAG_RECORD) != 0, 0);
-    push_tap(UI_BTN_RECORD); ui_logic_tick(&L);
-    T_EXPECT((L.curr.flags & UI_FLAG_RECORD) != 0);
-    push_tap(UI_BTN_RECORD); ui_logic_tick(&L);
-    T_EXPECT_EQ((L.curr.flags & UI_FLAG_RECORD) != 0, 0);
-    return 0;
-}
-
 // Press-and-release inside the same button fires the action (the firing
 // counterpart to touch_down_then_drag_off_button_cancels).
 T_CASE(down_then_up_inside_button_fires) {
@@ -206,22 +207,6 @@ T_CASE(down_then_up_inside_button_fires) {
     // Touch-active flag and button highlight are cleared after release.
     T_EXPECT_EQ((L.curr.flags & UI_FLAG_TOUCH_ACTIVE) != 0, 0);
     T_EXPECT_EQ(L.curr.active_button, UI_BTN_NONE);
-    return 0;
-}
-
-// Holding past LONG_PRESS_US (600 ms) on RECORD synthesizes a long-press that
-// jumps to GOES — exercises the auto-detect path inside ui_logic_tick.
-T_CASE(held_record_auto_long_press_to_goes) {
-    mock_reset();
-    ui_logic_t L; ui_logic_init(&L);
-    g_mock_now_us = 1000;
-    push_event(UI_BTN_RECORD, TOUCH_DOWN);
-    ui_logic_tick(&L);                       // registers the press
-    T_EXPECT_EQ(L.curr.demod, (uint8_t)DEMOD_FM);
-
-    g_mock_now_us += 700000;                 // 700 ms held, queue empty
-    ui_logic_tick(&L);
-    T_EXPECT_EQ(L.curr.demod, (uint8_t)DEMOD_GOES);
     return 0;
 }
 
@@ -246,7 +231,7 @@ T_CASE(swipes_change_span_with_clamps) {
     return 0;
 }
 
-// Taps below the status bar (y >= 32) hit no button and change nothing.
+// Taps below the status bar hit no button and change nothing.
 T_CASE(tap_below_status_bar_ignored) {
     mock_reset();
     ui_logic_t L; ui_logic_init(&L);
@@ -285,14 +270,13 @@ int main(void) {
     T_RUN(mute_toggles);
     T_RUN(layout_follows_demod);
     T_RUN(tuning_gated_to_spectrum_page);
+    T_RUN(image_pages_only_expose_mode_button);
     T_RUN(volume_clamps_at_0_and_100);
     T_RUN(touch_down_then_drag_off_button_cancels);
     T_RUN(spi_emits_full_state_first);
     T_RUN(freq_down_decrements_and_clamps_at_zero);
     T_RUN(mode_cycles_demod);
-    T_RUN(record_toggles);
     T_RUN(down_then_up_inside_button_fires);
-    T_RUN(held_record_auto_long_press_to_goes);
     T_RUN(swipes_change_span_with_clamps);
     T_RUN(tap_below_status_bar_ignored);
     T_RUN(sync_cadence_full_then_partials);

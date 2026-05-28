@@ -12,7 +12,6 @@
 //   ←/→     → SWIPE_L / SWIPE_R at center of spectrum region
 //   ↑/↓     → tap freq up / freq down buttons
 //   M       → tap mute
-//   R       → tap record
 //   1/2/3   → tap layout button repeatedly to reach that layout
 //   Space   → tap at mouse cursor
 //   L       → long press at mouse cursor

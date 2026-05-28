@@ -16,6 +16,7 @@
 #include "screen_config.h"
 #include "synth_data.h"
 #include "touch.h"
+#include "ui_state.h"
 
 static SDL_Window   *g_window;
 static SDL_Renderer *g_renderer;
@@ -142,6 +143,9 @@ int main(int argc, char **argv) {
         // Pico → FPGA: spectrum bins synthesized once per frame, pushed
         // through the Pico-side state.
         synth_spectrum_bins(pico.L.curr.spectrum_bins);
+        if (pico.L.curr.demod == DEMOD_FM) {
+            synth_rds_text(pico.L.curr.rds_text, (uint8_t)sizeof(pico.L.curr.rds_text));
+        }
         pico_sim_tick(&pico);
         fpga_sim_tick(&fpga, pixels);
 

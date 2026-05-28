@@ -1,19 +1,8 @@
 #include "input_map.h"
 
 #include "screen_config.h"
+#include "ui_controls.h"
 #include "ui_state.h"
-
-// Centroid of a status-bar button — used to synthesize a tap when a hotkey
-// stands in for touch. Must agree with the button layout in pixel_shader.c
-// and ui_logic.c.
-#define BTN_W 32
-#define BTN_GAP 4
-
-static int status_btn_center_x(int id) {
-    int pitch = BTN_W + BTN_GAP;
-    int x0 = SCREEN_W - (id + 1) * pitch;
-    return x0 + BTN_W / 2;
-}
 
 bool input_map_translate(const SDL_Event *e,
                          int mouse_x, int mouse_y,
@@ -52,13 +41,11 @@ bool input_map_translate(const SDL_Event *e,
         case SDLK_RIGHT:
             ev->x = SCREEN_W / 2; ev->y = 100; ev->kind = TOUCH_SWIPE_R; return true;
         case SDLK_UP:
-            ev->x = (uint16_t)status_btn_center_x(UI_BTN_FREQ_UP); ev->y = 16; ev->kind = TOUCH_TAP; return true;
+            ev->x = ui_button_cx(UI_BTN_FREQ_UP); ev->y = ui_button_cy(); ev->kind = TOUCH_TAP; return true;
         case SDLK_DOWN:
-            ev->x = (uint16_t)status_btn_center_x(UI_BTN_FREQ_DN); ev->y = 16; ev->kind = TOUCH_TAP; return true;
+            ev->x = ui_button_cx(UI_BTN_FREQ_DN); ev->y = ui_button_cy(); ev->kind = TOUCH_TAP; return true;
         case SDLK_m:
-            ev->x = (uint16_t)status_btn_center_x(UI_BTN_MUTE); ev->y = 16; ev->kind = TOUCH_TAP; return true;
-        case SDLK_r:
-            ev->x = (uint16_t)status_btn_center_x(UI_BTN_RECORD); ev->y = 16; ev->kind = TOUCH_TAP; return true;
+            ev->x = ui_button_cx(UI_BTN_MUTE); ev->y = ui_button_cy(); ev->kind = TOUCH_TAP; return true;
         case SDLK_l:
             ev->x = (uint16_t)mouse_x; ev->y = (uint16_t)mouse_y; ev->kind = TOUCH_LONG; return true;
         case SDLK_SPACE:
@@ -69,7 +56,7 @@ bool input_map_translate(const SDL_Event *e,
         case SDLK_4:
             // Tap the mode button (cycles FM / AM / GOES / ADS-B; page follows);
             // caller decides how many taps to send.
-            ev->x = (uint16_t)status_btn_center_x(UI_BTN_MODE); ev->y = 16; ev->kind = TOUCH_TAP; return true;
+            ev->x = ui_button_cx(UI_BTN_MODE); ev->y = ui_button_cy(); ev->kind = TOUCH_TAP; return true;
         default: break;
         }
         break;

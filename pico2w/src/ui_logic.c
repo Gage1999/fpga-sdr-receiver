@@ -4,6 +4,7 @@
 
 #include "hal_pico.h"
 #include "screen_config.h"
+#include "ui_controls.h"
 #include "ui_state.h"
 #include "wire_protocol.h"
 
@@ -20,24 +21,10 @@
 #define FREQ_STEP_SMALL 10000u   // 10 kHz
 #define VOL_STEP 5u
 
-// Status bar button layout — must match pixel_shader.c.
-#define STATUS_BTN_W 32
-#define STATUS_BTN_GAP 4
-#define STATUS_BTN_TOP 0
-#define STATUS_BTN_BOTTOM 32
-
-static uint16_t btn_x0(uint8_t id) {
-    uint16_t pitch = STATUS_BTN_W + STATUS_BTN_GAP;
-    return (uint16_t)(SCREEN_W - (uint16_t)(id + 1) * pitch);
-}
-
 // Returns UI_BTN_NONE if outside any button.
-static uint8_t hit_button(uint16_t x, uint16_t y) {
-    if (y >= STATUS_BTN_BOTTOM) return UI_BTN_NONE;
-    for (uint8_t i = 0; i < UI_BTN_COUNT; i++) {
-        uint16_t x0 = btn_x0(i);
-        if (x >= x0 && x < x0 + STATUS_BTN_W) return i;
-    }
+static uint8_t hit_button(const ui_logic_t *L, uint16_t x, uint16_t y) {
+    uint8_t btn = UI_BTN_NONE;
+    if (ui_button_hit(x, y, L->curr.layout, &btn)) return btn;
     return UI_BTN_NONE;
 }
 
@@ -115,9 +102,6 @@ static void action_button_press(ui_logic_t *L, uint8_t btn) {
     case UI_BTN_MODE:
         set_demod(L, (uint8_t)((L->curr.demod + 1) % DEMOD_COUNT));
         break;
-    case UI_BTN_RECORD:
-        L->curr.flags ^= UI_FLAG_RECORD;
-        break;
     case UI_BTN_MUTE:
         L->curr.flags ^= UI_FLAG_MUTE;
         break;
@@ -135,7 +119,7 @@ static void handle_touch(ui_logic_t *L, const touch_event_t *ev) {
         L->curr.touch_x = ev->x;
         L->curr.touch_y = ev->y;
         L->curr.flags |= UI_FLAG_TOUCH_ACTIVE;
-        uint8_t btn = hit_button(ev->x, ev->y);
+        uint8_t btn = hit_button(L, ev->x, ev->y);
         L->curr.active_button = btn;
         break;
     }
@@ -144,7 +128,7 @@ static void handle_touch(ui_logic_t *L, const touch_event_t *ev) {
         L->curr.touch_y = ev->y;
         // Cancel button highlight if drag leaves it.
         if (L->curr.active_button != UI_BTN_NONE) {
-            uint8_t btn = hit_button(ev->x, ev->y);
+            uint8_t btn = hit_button(L, ev->x, ev->y);
             if (btn != L->curr.active_button) L->curr.active_button = UI_BTN_NONE;
         }
         break;
@@ -152,7 +136,7 @@ static void handle_touch(ui_logic_t *L, const touch_event_t *ev) {
     case TOUCH_UP: {
         L->touch_is_down = 0;
         // If we released inside the originally-pressed button, fire it.
-        uint8_t btn = hit_button(ev->x, ev->y);
+        uint8_t btn = hit_button(L, ev->x, ev->y);
         if (btn != UI_BTN_NONE && btn == L->curr.active_button) {
             action_button_press(L, btn);
         }
@@ -161,14 +145,11 @@ static void handle_touch(ui_logic_t *L, const touch_event_t *ev) {
         break;
     }
     case TOUCH_TAP: {
-        uint8_t btn = hit_button(ev->x, ev->y);
+        uint8_t btn = hit_button(L, ev->x, ev->y);
         if (btn != UI_BTN_NONE) action_button_press(L, btn);
         break;
     }
     case TOUCH_LONG: {
-        // Long-press on RECORD jumps right to GOES mode (placeholder gesture).
-        uint8_t btn = hit_button(ev->x, ev->y);
-        if (btn == UI_BTN_RECORD) set_demod(L, (uint8_t)DEMOD_GOES);
         break;
     }
     case TOUCH_SWIPE_L: {

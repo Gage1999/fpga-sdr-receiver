@@ -10,6 +10,7 @@ static region_t make_region(uint8_t kind, uint16_t x0, uint16_t y0, uint16_t w, 
 region_t region_for_kind(uint8_t kind, uint8_t layout) {
     switch (kind) {
     case R_STATUS:
+        if (layout == LAYOUT_GOES_FULL || layout == LAYOUT_ADSB_FULL) return make_region(R_NONE, 0, 0, 0, 0);
         return make_region(R_STATUS, 0, 0, SCREEN_W, STATUS_H);
 
     case R_SPECTRUM:
@@ -26,13 +27,13 @@ region_t region_for_kind(uint8_t kind, uint8_t layout) {
 
     case R_GOES:
         if (layout == LAYOUT_GOES_FULL) {
-            return make_region(R_GOES, 0, STATUS_H, SCREEN_W, GOES_FULL_H);
+            return make_region(R_GOES, 0, 0, SCREEN_W, GOES_FULL_H);
         }
         return make_region(R_NONE, 0, 0, 0, 0);
 
     case R_ADSB:
         if (layout == LAYOUT_ADSB_FULL) {
-            return make_region(R_ADSB, 0, STATUS_H, SCREEN_W, ADSB_FULL_H);
+            return make_region(R_ADSB, 0, 0, SCREEN_W, ADSB_FULL_H);
         }
         return make_region(R_NONE, 0, 0, 0, 0);
 

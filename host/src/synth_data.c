@@ -9,10 +9,11 @@ static uint32_t s_goes_counter;
 static uint32_t s_goes_row;
 static uint32_t s_adsb_counter;
 static uint32_t s_adsb_tick;
+static uint32_t s_rds_counter;
 
 #define ADSB_PLANE_COUNT 6u
 #define ADSB_REGION_W    800
-#define ADSB_REGION_H    448
+#define ADSB_REGION_H    480
 
 static uint32_t xorshift32(uint32_t *s) {
     uint32_t x = *s;
@@ -30,6 +31,7 @@ void synth_init(uint32_t seed) {
     s_goes_row = 0;
     s_adsb_counter = 0;
     s_adsb_tick = 0;
+    s_rds_counter = 0;
 }
 
 void synth_spectrum_bins(uint16_t bins[256]) {
@@ -76,6 +78,25 @@ bool synth_goes_row_ready(uint8_t pixels[800]) {
     }
     s_goes_row++;
     return true;
+}
+
+uint16_t synth_goes_row_index(uint16_t region_h) {
+    if (region_h == 0) return 0;
+    return (uint16_t)(s_goes_row % region_h);
+}
+
+void synth_rds_text(char *out, uint8_t out_cap) {
+    static const char *msgs[] = {
+        "KUCR 88.3  UCR RADIO",
+        "RDS DEMO  FM STEREO",
+        "CS122A SDR RECEIVER",
+    };
+    if (out_cap == 0) return;
+    s_rds_counter++;
+    const char *msg = msgs[(s_rds_counter / 240u) % (sizeof(msgs) / sizeof(msgs[0]))];
+    uint8_t i = 0;
+    for (; i + 1u < out_cap && msg[i]; i++) out[i] = msg[i];
+    out[i] = '\0';
 }
 
 uint8_t synth_adsb_planes(adsb_plane_t *out, uint8_t max) {
