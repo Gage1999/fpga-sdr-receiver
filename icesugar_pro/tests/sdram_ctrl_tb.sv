@@ -11,7 +11,7 @@ logic        rst;
 logic        req_valid;
 logic        req_wr;
 logic [24:0] req_addr;
-logic [5:0]  req_len;
+logic [9:0]  req_len;
 logic        req_ready;
 
 logic [15:0] wr_data;
@@ -69,7 +69,7 @@ logic [12:0] active_row [0:3];
 // Write tracking
 logic [1:0]  wr_ba;
 logic [9:0]  wr_col;
-int          wr_burst;
+integer          wr_burst;
 logic        wr_active;
 
 // Read pipeline: CL=2 requires 3 stages (cmd at stage0, valid data at stage2 two cycles later)
@@ -77,12 +77,12 @@ logic        rdp_v [0:2];
 logic [1:0]  rdp_ba [0:2];
 logic [12:0] rdp_row [0:2];
 logic [9:0]  rdp_col [0:2];
-int          rdp_cnt [0:2];
+integer          rdp_cnt [0:2];
 
 wire [3:0] sdram_cmd = {sdram_cs_n, sdram_ras_n, sdram_cas_n, sdram_we_n};
 
 // Flat address helper
-function automatic int flat_addr(input logic [1:0] ba, input logic [12:0] row, input int col);
+function automatic integer flat_addr(input logic [1:0] ba, input logic [12:0] row, input integer col);
     flat_addr = (ba * 8192 + row) * 512 + col;
 endfunction
 
@@ -117,6 +117,7 @@ always @(posedge clk) begin
             wr_burst  <= 0;
             wr_active <= 1'b1;
         end
+        4'b0010: rdp_v[0] <= 1'b0; // PRECHARGE terminates read burst
         4'b0101: // READ handled below
             ;
         default: ;
@@ -186,7 +187,7 @@ localparam [15:0] PAT7 = 16'hC3C3;
 
 logic [15:0] wr_pattern [0:7];
 logic [15:0] rd_capture [0:7];
-int rd_idx, errors;
+integer rd_idx, errors;
 
 initial begin
     wr_pattern[0] = PAT0; wr_pattern[1] = PAT1;
@@ -195,12 +196,13 @@ initial begin
     wr_pattern[6] = PAT6; wr_pattern[7] = PAT7;
 
     errors    = 0;
-    req_valid = 0; req_wr = 0; req_addr = 0; req_len = 0;
-    wr_data   = 0; wr_valid = 0;
+    rd_idx    = 0;
+    req_valid <= 0; req_wr <= 0; req_addr <= 0; req_len <= 0;
+    wr_data   <= 0; wr_valid <= 0;
 
-    rst = 1;
+    rst <= 1;
     repeat(4) @(posedge clk);
-    rst = 0;
+    rst <= 0;
 
     $display("Waiting for SDRAM init...");
     wait(req_ready === 1'b1);
@@ -208,27 +210,26 @@ initial begin
     $display("Init done at time %0t ns", $time);
 
     // ---- WRITE ----
-    // Hold req_valid high until all data is fed (controller may be delayed by refresh cycles)
-    req_valid = 1'b1;
-    req_wr    = 1'b1;
-    req_addr  = 25'h000000;
-    req_len   = 6'd8;
+    req_valid <= 1'b1;
+    req_wr    <= 1'b1;
+    req_addr  <= 25'h000000;
+    req_len   <= 10'd8;
 
     begin : wr_loop
-        int wi;
-        wi = 0;
+        integer wi = 0;
         while (wi < 8) begin
             @(posedge clk);
-            wr_valid = 1'b0;
             if (wr_ready) begin
-                wr_data  = wr_pattern[wi];
-                wr_valid = 1'b1;
+                wr_data  <= wr_pattern[wi];
+                wr_valid <= 1'b1;
                 wi = wi + 1;
+            end else begin
+                wr_valid <= 1'b0;
             end
         end
         @(posedge clk);
-        wr_valid  = 1'b0;
-        req_valid = 1'b0;
+        wr_valid  <= 1'b0;
+        req_valid <= 1'b0;
     end
 
     wait(done === 1'b1);
@@ -236,13 +237,11 @@ initial begin
     $display("Write done at %0t ns", $time);
 
     // ---- READ ----
-    // Hold req_valid high until accepted (controller handles any pending refreshes first)
-    req_valid = 1'b1;
-    req_wr    = 1'b0;
-    req_addr  = 25'h000000;
-    req_len   = 6'd8;
+    req_valid <= 1'b1;
+    req_wr    <= 1'b0;
+    req_addr  <= 25'h000000;
+    req_len   <= 10'd8;
 
-    rd_idx = 0;
     begin : rd_loop
         while (rd_idx < 8) begin
             @(posedge clk);
@@ -254,12 +253,12 @@ initial begin
     end
 
     wait(done === 1'b1);
-    req_valid = 1'b0;
+    req_valid <= 1'b0;
     @(posedge clk);
     $display("Read done at %0t ns", $time);
 
     // Verify
-    for (int i = 0; i < 8; i++) begin
+    for (integer i = 0; i < 8; i++) begin
         if (rd_capture[i] !== wr_pattern[i]) begin
             $display("FAIL word[%0d]: expected %04h got %04h", i, wr_pattern[i], rd_capture[i]);
             errors = errors + 1;

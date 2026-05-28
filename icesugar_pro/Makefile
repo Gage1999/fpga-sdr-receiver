@@ -1,5 +1,5 @@
 
-.PHONY: all prog sim sim_i2s sim_fm sim_lcd sim_fft sim_sdram prog_lcd_test prog_spi_rx_test prog_i2s_tone_test prog_full_audio_tone prog_fm_chain_test prog_fm_spi12 prog_fm_spi8 prog_fm_spi8_paced clean
+.PHONY: all prog sim sim_i2s sim_fm sim_lcd sim_fft prog_lcd_test prog_spi_rx_test prog_i2s_tone_test prog_full_audio_tone prog_fm_chain_test prog_fm_spi12 prog_fm_spi8 prog_fm_spi8_paced clean
 
 SV_SRCS = src/top.sv \
           src/spi_cmd_slave.sv \
@@ -103,6 +103,30 @@ build/fm_spi8_paced.bit: $(SV_SRCS) $(LPF) build/font_8x16.mem | build
 prog_fm_spi8_paced: build/fm_spi8_paced.bit
 	icesprog $<
 
+sim_sdram: tests/sdram_ctrl_tb.sv src/sdram_ctrl.sv | build
+	iverilog -g2012 -o build/sdram_ctrl.sim tests/sdram_ctrl_tb.sv src/sdram_ctrl.sv
+	vvp build/sdram_ctrl.sim
+
+build/sdram_test.bit: tests/sdram_test_top.sv src/sdram_ctrl.sv $(LPF) | build
+	yosys -p "synth_ecp5 -top sdram_test_top -json build/sdram_test.json" tests/sdram_test_top.sv src/sdram_ctrl.sv
+	nextpnr-ecp5 $(DEVICE) --json build/sdram_test.json --textcfg build/sdram_test.cfg --lpf $(LPF) --freq 25
+	ecppack build/sdram_test.cfg $@
+
+prog_sdram_test: build/sdram_test.bit
+	icesprog $<
+
+sim_sdram_display: tests/sdram_display_tb.sv src/sdram_ctrl.sv src/scan_out.sv src/line_cache.sv | build
+	iverilog -g2012 -DSIMULATION -o build/sdram_display.sim tests/sdram_display_tb.sv src/sdram_ctrl.sv src/scan_out.sv src/line_cache.sv
+	vvp build/sdram_display.sim
+
+build/sdram_display_test.bit: tests/sdram_display_top.sv src/sdram_ctrl.sv src/scan_out.sv src/line_cache.sv $(LPF) | build
+	yosys -p "synth_ecp5 -top sdram_display_top -json build/sdram_display_test.json" tests/sdram_display_top.sv src/sdram_ctrl.sv src/scan_out.sv src/line_cache.sv
+	nextpnr-ecp5 $(DEVICE) --json build/sdram_display_test.json --textcfg build/sdram_display_test.cfg --lpf $(LPF) --freq 25
+	ecppack build/sdram_display_test.cfg $@
+
+prog_sdram_display_test: build/sdram_display_test.bit
+	icesprog $<
+
 sim: tb/top_tb.sv $(SV_SRCS) build/font_8x16.mem | build
 	iverilog -g2012 -DSIMULATION -o build/$(TOP).sim tb/top_tb.sv $(SV_SRCS)
 	vvp build/$(TOP).sim
@@ -123,10 +147,6 @@ sim_lcd: tb/tb_lcd.sv src/lcd.sv src/color_lut.sv src/font8x16_rom.sv build/font
 sim_fft: tb/tb_fft256.sv src/fft256.sv src/butterfly.sv src/twiddle_rom.sv | build
 	iverilog -g2012 -o build/fft256.sim $^
 	vvp build/fft256.sim
-
-sim_sdram: tests/sdram_ctrl_tb.sv src/sdram_ctrl.sv | build
-	iverilog -g2012 -o build/sdram_ctrl.sim tests/sdram_ctrl_tb.sv src/sdram_ctrl.sv
-	vvp build/sdram_ctrl.sim
 
 build:
 	mkdir -p build

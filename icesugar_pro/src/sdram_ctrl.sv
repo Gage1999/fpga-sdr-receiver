@@ -5,7 +5,7 @@ module sdram_ctrl (
     input  logic        req_valid,
     input  logic        req_wr,
     input  logic [24:0] req_addr,
-    input  logic [5:0]  req_len,
+    input  logic [9:0]  req_len,
     output logic        req_ready,
 
     input  logic [15:0] wr_data,
@@ -44,9 +44,9 @@ localparam TRP         = 2;
 localparam TRFC        = 7;
 localparam TREF_PERIOD = 780;
 
-// Mode register: CL=2, BL=8, sequential, no write burst
-// A[2:0]=011, A[3]=0, A[6:4]=010, A[9:7]=000
-localparam [12:0] MODE_REG = 13'b000_0_00_010_0_011;
+// Mode register: CL=2, BL=Full Page (512 cols), sequential, no write burst
+// A[2:0]=111, A[3]=0, A[6:4]=010, A[9:7]=000
+localparam [12:0] MODE_REG = 13'b000_0_00_010_0_111;
 
 // {CS_n, RAS_n, CAS_n, WE_n}
 localparam [3:0] CMD_NOP       = 4'b0111;
@@ -77,8 +77,8 @@ state_t state;
 logic [14:0] timer;
 logic [3:0]  ref_cnt;
 logic [10:0] ref_timer;
-logic [5:0]  burst_cnt;
-logic [5:0]  req_len_r;
+logic [9:0]  burst_cnt;
+logic [9:0]  req_len_r;
 logic        req_wr_r;
 logic [24:0] req_addr_r;
 logic [3:0]  cl_cnt;
@@ -99,7 +99,7 @@ always_ff @(posedge clk) begin
         ref_cnt     <= 4'(INIT_REF);
         ref_timer   <= 11'(TREF_PERIOD - 1);
         burst_cnt   <= 6'd0;
-        req_len_r   <= 6'd0;
+        req_len_r   <= 10'd0;
         req_wr_r    <= 1'b0;
         req_addr_r  <= 25'd0;
         cl_cnt      <= 4'd0;
@@ -179,7 +179,7 @@ always_ff @(posedge clk) begin
                     {sdram_cs_n, sdram_ras_n, sdram_cas_n, sdram_we_n} <= CMD_AUTOREF;
                     timer <= 15'(TRFC - 1);
                     state <= S_REFRESH;
-                end else if (req_valid) begin
+                end else if (req_valid && req_ready) begin
                     req_ready  <= 1'b0;
                     req_wr_r   <= req_wr;
                     req_len_r  <= req_len;
@@ -206,13 +206,13 @@ always_ff @(posedge clk) begin
                     if (req_wr_r) begin
                         {sdram_cs_n, sdram_ras_n, sdram_cas_n, sdram_we_n} <= CMD_WRITE;
                         sdram_ba <= ba_r;
-                        sdram_a  <= {3'b010, col_r}; // A10=1 auto-precharge
+                        sdram_a  <= {3'b010, col_r}; // A10=0, manual precharge
                         state    <= S_WRITE_DATA;
                         wr_ready <= 1'b1;
                     end else begin
                         {sdram_cs_n, sdram_ras_n, sdram_cas_n, sdram_we_n} <= CMD_READ;
                         sdram_ba <= ba_r;
-                        sdram_a  <= {3'b010, col_r};
+                        sdram_a  <= {3'b010, col_r}; // A10=0, manual precharge
                         cl_cnt   <= 4'(TCAS);     // registered pins add 1 cycle; total latency = TCAS+1 cycles
                         state    <= S_READ_CL;
                     end
@@ -249,14 +249,18 @@ always_ff @(posedge clk) begin
                 rd_valid  <= 1'b1;
                 burst_cnt <= burst_cnt + 6'd1;
                 if (burst_cnt == req_len_r - 6'd1) begin
-                    rd_valid <= 1'b0;
                     timer    <= 15'(TRP + 1);
                     state    <= S_PRECHARGE;
                 end
             end
 
             S_PRECHARGE: begin
-                if (timer == 15'd0) begin
+                if (timer == 15'(TRP + 1)) begin
+                    {sdram_cs_n, sdram_ras_n, sdram_cas_n, sdram_we_n} <= CMD_PRECHARGE;
+                    sdram_ba <= ba_r;
+                    sdram_a  <= 13'b0010000000000; // A10=1, precharge all banks
+                    timer    <= timer - 15'd1;
+                end else if (timer == 15'd0) begin
                     done  <= 1'b1;
                     state <= S_DONE;
                 end else begin
