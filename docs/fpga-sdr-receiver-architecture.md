@@ -158,7 +158,7 @@ Total: 56 blocks × 2304 bytes ≈ 126 KB. Target utilization **~50%**, leaving 
 | AUDIO_RING | 0x0034_0000 – 0x0037_FFFF | 256 KB | optional audio history for replay |
 | SCRATCH | 0x0038_0000 – 0x01FF_FFFF | ~28 MB | unallocated; future use |
 
-The ECP5 only needs to know about FB_FRONT/FB_BACK plus the scratch waterfall/GOES/ADS-B regions for compositor writes. Everything else is "we have it if we need it." The ADS-B map is static, so the compositor blits it from ADSB_BASEMAP once on mode entry and then only redraws plane dots. ADSB_BASEMAP is populated from SPI config flash at boot (it's too big for EBR); `tools/map_to_rom.py` produces that RGB565 image centered on a given lat/lon, and the C reference model draws a stylized stand-in until the real image is loaded.
+The ECP5 only needs to know about FB_FRONT/FB_BACK plus the scratch waterfall/GOES/ADS-B regions for compositor writes. Everything else is "we have it if we need it." The ADS-B map is static, so the compositor blits it from ADSB_BASEMAP once on mode entry and then only redraws plane markers, labels, and the compact header. ADSB_BASEMAP is populated from SPI config flash at boot (it's too big for EBR); `tools/map_to_rom.py` produces that RGB565 image centered on a given lat/lon, with `--dark` available for a low-brightness display asset. The C reference model loads the tracked Riverside basemap when present and otherwise falls back to a stylized stand-in.
 
 ---
 
@@ -173,7 +173,8 @@ Three primitive operations, each implemented as a small write-side FSM that subm
 - Cost: 1 burst read of palette LUT (already in EBR), 1 burst write of 1600 bytes. ~9 µs at 100 MHz.
 
 ### 7b. `goes_row_write`
-- Input: 800-byte grayscale row, target Y in GOES region.
+- Input: 800-byte grayscale row, target Y in GOES region. A real decoder should
+  derive target Y from frame/line sync or hold blank until it has sync.
 - Action: expand each grayscale byte to RGB565 (`val | val<<5 | val>>1` for green emphasis or via GOES palette), burst-write to SDRAM.
 - Frequency: 2 lines/sec from the satellite. Trivial.
 

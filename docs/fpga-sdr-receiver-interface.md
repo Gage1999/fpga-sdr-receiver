@@ -184,6 +184,7 @@ ADS-B ~2 Msps both blow past even the CS8 ceiling). So the intended split is:
 | Mode | Demod on | Crosses JP5 as | Status |
 |---|---|---|---|
 | FM | ECP5 | raw IQ (CS16) | **built** |
+| FM RDS metadata | PlutoSky-side decoder | compact text field in UI state | display slot built in host model; decoder/transport not wired |
 | NOAA APT ("GOES" today) | ECP5 | raw IQ | feasible, not wired |
 | GOES HRIT | Zynq | decoded image rows/tiles | not wired (needs a Zynq→ECP5 data path beyond bare IQ) |
 | ADS-B | Zynq | aircraft list | not wired (see §8) |
@@ -229,9 +230,11 @@ count(u8), then count × {
 
 **ECP5 side:** already specified in the model. `DEMOD_ADSB`/`LAYOUT_ADSB_FULL`
 exist in `ui_state.h`; the SDRAM map has `ADSB_BASEMAP`; `fb_compositor.c` has
-`fb_compose_adsb_frame()`; `tools/map_to_rom.py` builds the UCR-centered basemap.
-On mode entry the compositor blits the basemap once, then plots a dot (and
-optional callsign) per aircraft per update — slow enough to single-buffer.
+`fb_compose_adsb_frame()` with a dark basemap pass, range rings, a compact
+status header, labels, and high-contrast aircraft markers; `tools/map_to_rom.py`
+builds the UCR-centered basemap and can export a dark RGB565 asset with
+`--dark`. On mode entry the compositor blits the basemap once, then plots a dot
+(and optional callsign) per aircraft per update — slow enough to single-buffer.
 
 So once the SDRAM framebuffer and a non-IQ Zynq→ECP5 path exist, ADS-B is:
 add a `mode` value, an `ADSB_PLANES` packet, and a 1090 MHz antenna (§9). The

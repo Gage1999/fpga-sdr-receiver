@@ -172,7 +172,7 @@ Constraints:
 `shared/include/ui_state.h`. Target small but not crippled — main FB-bound spectrum bins are kept in here so the live shader can draw them without touching SDRAM.
 
 ```c
-#define UI_STATE_VERSION  1u
+#define UI_STATE_VERSION  2u
 
 typedef enum : uint8_t { DEMOD_FM=0, DEMOD_AM=1, DEMOD_GOES=2, DEMOD_ADSB=3 } demod_mode_t;
 typedef enum : uint8_t {
@@ -182,7 +182,7 @@ typedef enum : uint8_t {
 } layout_t;
 
 #define UI_FLAG_MUTE         (1u << 0)
-#define UI_FLAG_RECORD       (1u << 1)
+#define UI_FLAG_RECORD       (1u << 1)  // reserved; no visible record button
 #define UI_FLAG_TOUCH_ACTIVE (1u << 2)
 
 typedef struct __attribute__((packed)) {
@@ -198,6 +198,7 @@ typedef struct __attribute__((packed)) {
     uint8_t  active_button;      // 0xFF = none
     uint8_t  brightness;
     uint8_t  reserved[2];
+    char     rds_text[32];       // FM RDS/radio text, if decoded upstream
     uint16_t spectrum_bins[256]; // FFT magnitudes for live shader to draw bars
 } ui_state_t;
 
@@ -261,12 +262,11 @@ typedef uint16_t pixel_t;
 
 | Region | Origin | Size | Owner | Lives where |
 |---|---|---|---|---|
-| status | (0,0) | 800×32 | shader | live |
-| spectrum | (0,32) | 800×128 | shader | live (from `spectrum_bins`) |
-| waterfall | (0,160) | 800×240 | compositor | framebuffer |
-| goes_strip | (0,400) | 800×80 | compositor | framebuffer |
-| goes_full | (0,32) | 800×448 | compositor | framebuffer (in `LAYOUT_GOES_FULL`) |
-| adsb_full | (0,32) | 800×448 | compositor | framebuffer (in `LAYOUT_ADSB_FULL`) |
+| status | (0,0) | 800×64 | shader | live (FM/AM only) |
+| spectrum | (0,64) | 800×128 | shader | live (from `spectrum_bins`) |
+| waterfall | (0,192) | 800×288 | compositor | framebuffer |
+| goes_full | (0,0) | 800×480 | compositor | framebuffer (in `LAYOUT_GOES_FULL`) |
+| adsb_full | (0,0) | 800×480 | compositor | framebuffer (in `LAYOUT_ADSB_FULL`) |
 | overlay | varies | varies | shader | live (modal, cursor) |
 
 `regions.c` exports a `region_at(x, y, layout)` lookup that returns the active region's kind + local-origin offset.
@@ -297,7 +297,7 @@ uint16_t pixel_shader(uint16_t x, uint16_t y,
 ```
 
 Each `shade_*`:
-- `shade_status` — frequency text, demod label, volume bar, button highlights via font + sprite ROM.
+- `shade_status` — frequency text, large FM RDS text, demod label, centered volume bar, and 48×48 touch buttons via font + sprite ROM. The visible controls are tune up/down, volume up/down, mute, and mode; image modes hide the full status bar and expose only a floating MODE button.
 - `shade_spectrum` — `bin_idx = (x * 256) >> log2(r.w)` (powers of 2 only — flag div); `bar_top = r.h - (bins[bin_idx] * r.h >> 16)`; foreground if `y >= bar_top`.
 - `shade_overlay` — touch cursor crosshair if `flags & TOUCH_ACTIVE`, modal frames, focused-button border.
 
@@ -317,9 +317,10 @@ void fb_compose_goes_row(fb_t *fb, uint16_t row_y_in_region,
 
 void fb_compose_clear(fb_t *fb, region_t r, uint16_t color);
 
-// ADS-B map: static basemap + one dot per aircraft. Slow-update, so no back
-// buffer. Mock basemap is procedural (grid + river); real version blits a
-// Riverside map-image ROM.
+// ADS-B map: darkened static basemap + range rings, compact status header,
+// labels, and one high-contrast marker per aircraft. Slow-update, so no back
+// buffer. The real version blits a Riverside map-image ROM; the fallback is
+// procedural.
 void fb_compose_adsb_frame(fb_t *fb, uint8_t layout,
                            const adsb_plane_t *planes, uint8_t n_planes);
 ```
@@ -351,7 +352,7 @@ loop @ 60 Hz:
     fpga_sim.tick():
         drain spi_link, wire_consume() updates fpga_sim's ui_state shadow
         if synth_data has new magnitudes → fb_compose_waterfall_step()
-        if synth_data has new GOES row    → fb_compose_goes_row()
+        if synth_data has new GOES row    → fb_compose_goes_row() at the current source row
         for y in 0..479: for x in 0..799:
             uint16_t fb_under = fb_read(fb, x, y);
             framebuf_out[y][x] = pixel_shader(x, y, fb_under, &ui, &roms);
@@ -389,7 +390,7 @@ This way:
 |---|---|---|
 | Font 8×16 | 96 ASCII chars × 16 rows × 1 byte | `font_8x16.c` static const |
 | Font 16×32 | 96 chars × 32 rows × 2 bytes | `font_16x32.c` |
-| Sprites | 16 × 32×32 RGB565 = 32 KB | `sprites.c`, named indices: `SPR_BTN_TUNE_UP`, `SPR_BTN_REC`, etc. |
+| Sprites | 16 × 32×32 RGB565 = 32 KB | `sprites.c`, named indices for tune, volume, mute, and mode icons |
 | Waterfall palette | 256 × RGB565 | `palette.c`, e.g. `viridis_565[256]` |
 | GOES palette | 256 × RGB565 | `palette.c`, grayscale-with-tint |
 
@@ -407,7 +408,6 @@ Keyboard equivalents (for scripted tests and laptop use without a touchscreen):
 - 1/2/3 → layout switch
 - Space → tap at cursor
 - L → LONG gesture
-- R → record toggle
 - F11 → fullscreen the window
 
 ---
