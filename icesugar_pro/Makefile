@@ -1,5 +1,5 @@
 
-.PHONY: all prog sim sim_i2s sim_fm sim_lcd sim_fft prog_lcd_test prog_spi_rx_test prog_i2s_tone_test prog_full_audio_tone prog_fm_chain_test prog_fm_spi12 prog_fm_spi8 clean
+.PHONY: all prog sim sim_i2s sim_fm sim_lcd sim_fft prog_lcd_test prog_spi_rx_test prog_i2s_tone_test prog_full_audio_tone prog_fm_chain_test prog_fm_spi12 prog_fm_spi8 prog_fm_spi8_paced clean
 
 SV_SRCS = src/top.sv \
           src/spi_cmd_slave.sv \
@@ -89,6 +89,14 @@ build/fm_spi8.bit: $(SV_SRCS) $(LPF) | build
 	ecppack build/fm_spi8.cfg $@
 
 prog_fm_spi8: build/fm_spi8.bit
+	icesprog $<
+
+build/fm_spi8_paced.bit: $(SV_SRCS) $(LPF) | build
+	yosys -p "chparam -set FM_CIC_R 8 -set IQ_PACED 1 -set IQ_SAMPLE_RATE 349000 -set IQ_FIFO_DEPTH 64 top; synth_ecp5 -top $(TOP) -json build/fm_spi8_paced.json" $(SV_SRCS)
+	nextpnr-ecp5 $(DEVICE) --json build/fm_spi8_paced.json --textcfg build/fm_spi8_paced.cfg --lpf $(LPF) --freq 25
+	ecppack build/fm_spi8_paced.cfg $@
+
+prog_fm_spi8_paced: build/fm_spi8_paced.bit
 	icesprog $<
 
 sim: tb/top_tb.sv $(SV_SRCS) | build

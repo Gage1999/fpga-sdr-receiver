@@ -78,6 +78,15 @@ function [7:0] abs16_hi(input logic signed [15:0] x);
     end
 endfunction
 
+function [7:0] mag_sum(input logic signed [15:0] r,
+                       input logic signed [15:0] i);
+    logic [8:0] sum;
+    begin
+        sum = 9'(abs16_hi(r)) + 9'(abs16_hi(i));
+        mag_sum = sum[8] ? 8'hff : sum[7:0];
+    end
+endfunction
+
 ram256x16 u_buf0_r (
     .clk (clk),
     .we (we0_r),
@@ -336,15 +345,19 @@ always_ff @(posedge clk or posedge rst) begin
             end
 
             OUT_WAIT: begin
+                if (comp_bank == 1'b0)
+                    rd_addr0 <= 8'd1;
+                else
+                    rd_addr1 <= 8'd1;
                 state <= OUTPUT;
             end
 
             OUTPUT: begin
                 bin_index <= out_cnt;
                 if (comp_bank == 1'b0) begin
-                    bin_magnitude <= abs16_hi(rd_data0_r) + abs16_hi(rd_data0_i);
+                    bin_magnitude <= mag_sum(rd_data0_r, rd_data0_i);
                 end else begin
-                    bin_magnitude <= abs16_hi(rd_data1_r) + abs16_hi(rd_data1_i);
+                    bin_magnitude <= mag_sum(rd_data1_r, rd_data1_i);
                 end
                 bin_valid <= 1'b1;
 
@@ -362,10 +375,12 @@ always_ff @(posedge clk or posedge rst) begin
                     end
                 end else begin
                     out_cnt <= out_cnt + 8'd1;
-                    if (comp_bank == 1'b0)
-                        rd_addr0 <= out_cnt + 8'd1;
-                    else
-                        rd_addr1 <= out_cnt + 8'd1;
+                    if (out_cnt < 8'd254) begin
+                        if (comp_bank == 1'b0)
+                            rd_addr0 <= out_cnt + 8'd2;
+                        else
+                            rd_addr1 <= out_cnt + 8'd2;
+                    end
                 end
             end
 

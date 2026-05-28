@@ -1,7 +1,11 @@
 module top #(
     parameter AUDIO_TEST_TONE = 0,
     parameter FM_CHAIN_TEST = 0,
-    parameter FM_CIC_R = 32
+    parameter FM_CIC_R = 32,
+    parameter IQ_PACED = 0,
+    parameter IQ_SAMPLE_RATE = 349000,
+    parameter IQ_FIFO_DEPTH = 16,
+    parameter CLK_HZ = 25000000
 )(
     input logic CLK,
 
@@ -103,10 +107,12 @@ logic [31:0] fifo_wdata, fifo_rdata;
 logic fifo_empty, fifo_full;
 logic fifo_pop;
 logic fifo_pop_d;
+logic iq_sample_tick;
+logic [31:0] iq_rate_acc;
 
 assign fifo_wdata = {spi_i, spi_q};
 
-async_fifo #(.WIDTH(32), .DEPTH(16)) u_iq_fifo (
+async_fifo #(.WIDTH(32), .DEPTH(IQ_FIFO_DEPTH)) u_iq_fifo (
     .wclk (spi_clk),
     .wrst (spi_rst),
     .wdata (fifo_wdata),
@@ -119,7 +125,22 @@ async_fifo #(.WIDTH(32), .DEPTH(16)) u_iq_fifo (
     .rempty (fifo_empty)
 );
 
-assign fifo_pop = ~fifo_empty;
+always_ff @(posedge CLK) begin
+    if (sys_rst) begin
+        iq_rate_acc <= 32'd0;
+        iq_sample_tick <= 1'b0;
+    end else begin
+        iq_sample_tick <= 1'b0;
+        if (iq_rate_acc >= (CLK_HZ - IQ_SAMPLE_RATE)) begin
+            iq_rate_acc <= iq_rate_acc + IQ_SAMPLE_RATE - CLK_HZ;
+            iq_sample_tick <= 1'b1;
+        end else begin
+            iq_rate_acc <= iq_rate_acc + IQ_SAMPLE_RATE;
+        end
+    end
+end
+
+assign fifo_pop = IQ_PACED ? (iq_sample_tick && ~fifo_empty) : ~fifo_empty;
 
 always_ff @(posedge CLK) begin
     if (sys_rst)
