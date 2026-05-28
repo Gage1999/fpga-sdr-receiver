@@ -25,10 +25,12 @@ static struct fb *make_fb(uint16_t fill) {
 
 static void render_full(uint16_t *out, const ui_state_t *ui, struct fb *fb) {
     aux_roms_t roms; aux_roms_default(&roms);
+    shader_state_t st;
+    pixel_shader_prepare(ui, &roms, &st);
     for (uint16_t y = 0; y < SCREEN_H; y++) {
         for (uint16_t x = 0; x < SCREEN_W; x++) {
             uint16_t under = fb_read((fb_t *)fb, x, y);
-            out[(size_t)y * SCREEN_W + x] = pixel_shader(x, y, under, ui, &roms);
+            out[(size_t)y * SCREEN_W + x] = pixel_shader(x, y, under, &st, &roms);
         }
     }
 }
