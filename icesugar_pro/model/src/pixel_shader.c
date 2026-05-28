@@ -43,6 +43,53 @@ static const char *mode_button_label(const ui_state_t *ui) {
     }
 }
 
+static uint16_t font16_row_for(const aux_roms_t *roms, char c, uint8_t gy) {
+    uint8_t idx = (uint8_t)c;
+    if (idx < FONT_16X32_FIRST || idx >= FONT_16X32_FIRST + FONT_16X32_COUNT) idx = '?';
+    return roms->font_16x32[(uint32_t)(idx - FONT_16X32_FIRST) * FONT_16X32_H + gy];
+}
+
+static uint8_t mode_label_ink(const char *label, int32_t rel_x, int32_t rel_y,
+                              const aux_roms_t *roms) {
+    if (rel_x < 0 || rel_x >= 2 * FONT_16X32_W ||
+        rel_y < 0 || rel_y >= FONT_16X32_H) return 0u;
+
+    uint8_t ch_idx = (uint8_t)(rel_x / FONT_16X32_W);
+    uint8_t gx = (uint8_t)(rel_x % FONT_16X32_W);
+    uint8_t gy = (uint8_t)rel_y;
+    uint16_t row = font16_row_for(roms, label[ch_idx], gy);
+    return (row & (uint16_t)(1u << (15 - gx))) != 0;
+}
+
+static void mode_label_origin(const char *label, const aux_roms_t *roms,
+                              int32_t *out_x, int32_t *out_y) {
+    int32_t min_x = 2 * FONT_16X32_W;
+    int32_t min_y = FONT_16X32_H;
+    int32_t max_x = -1;
+    int32_t max_y = -1;
+
+    for (int32_t y = 0; y < FONT_16X32_H; y++) {
+        for (int32_t x = 0; x < 2 * FONT_16X32_W; x++) {
+            if (!mode_label_ink(label, x, y, roms)) continue;
+            if (x < min_x) min_x = x;
+            if (x > max_x) max_x = x;
+            if (y < min_y) min_y = y;
+            if (y > max_y) max_y = y;
+        }
+    }
+
+    if (max_x < 0 || max_y < 0) {
+        *out_x = 8;
+        *out_y = 8;
+        return;
+    }
+
+    int32_t ink_w = max_x - min_x + 1;
+    int32_t ink_h = max_y - min_y + 1;
+    *out_x = ((int32_t)UI_STATUS_BTN_W - ink_w) / 2 - min_x;
+    *out_y = ((int32_t)UI_STATUS_BTN_W - ink_h) / 2 - min_y;
+}
+
 static uint16_t draw_mode_button(uint16_t local_x, uint16_t local_y,
                                  uint16_t bg,
                                  const ui_state_t *ui,
@@ -61,16 +108,13 @@ static uint16_t draw_mode_button(uint16_t local_x, uint16_t local_y,
     }
 
     const char *label = mode_button_label(ui);
-    if (local_x >= 8 && local_x < 8 + 2u * FONT_16X32_W &&
-        local_y >= 8 && local_y < 8 + FONT_16X32_H) {
-        uint16_t col = (uint16_t)(local_x - 8u);
-        uint8_t ch_idx = (uint8_t)(col / FONT_16X32_W);
-        uint8_t gx = (uint8_t)(col % FONT_16X32_W);
-        uint8_t gy = (uint8_t)(local_y - 8u);
-        uint8_t idx = (uint8_t)label[ch_idx];
-        uint16_t row = roms->font_16x32[(uint32_t)(idx - FONT_16X32_FIRST) * FONT_16X32_H + gy];
-        if (row & (uint16_t)(1u << (15 - gx))) px = fg;
-    }
+    int32_t text_x;
+    int32_t text_y;
+    mode_label_origin(label, roms, &text_x, &text_y);
+    if (mode_label_ink(label,
+                       (int32_t)local_x - text_x,
+                       (int32_t)local_y - text_y,
+                       roms)) px = fg;
 
     if (ui->active_button == UI_BTN_MODE && px != bg) px = brighten_rgb565(px, 48u);
     return px;
@@ -112,7 +156,7 @@ static uint16_t glyph_pixel_16x32(char c, uint8_t gx, uint8_t gy,
                                   const aux_roms_t *roms) {
     uint8_t idx = (uint8_t)c;
     if (idx < FONT_16X32_FIRST || idx >= FONT_16X32_FIRST + FONT_16X32_COUNT) idx = '?';
-    uint16_t row = roms->font_16x32[(uint32_t)(idx - FONT_16X32_FIRST) * FONT_16X32_H + gy];
+    uint16_t row = font16_row_for(roms, (char)idx, gy);
     uint16_t bit = (uint16_t)(1u << (15 - gx));
     return (row & bit) ? color : bg;
 }

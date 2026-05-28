@@ -83,8 +83,11 @@ void fb_compose_clear(fb_t *fb, region_t r, uint16_t color) {
 #define ADSB_RING_C    RGB565(0, 220, 255)    // range rings
 #define ADSB_CENTER_C  RGB565(110, 235, 255)  // UCR marker (cyan)
 #define ADSB_LABEL_C   RGB565(235, 250, 255)  // ring labels
-#define ADSB_HEADER_BG RGB565(2, 8, 14)
-#define ADSB_HEADER_2  RGB565(120, 220, 255)
+#define ADSB_HEADER_H  64
+#define ADSB_HEADER_BG RGB565(20, 24, 32)
+#define ADSB_HEADER_FG RGB565(220, 235, 255)
+#define ADSB_HEADER_2  RGB565(80, 190, 255)
+#define ADSB_HEADER_DIM RGB565(165, 205, 225)
 #define ADSB_SHADOW    RGB565(0, 0, 0)
 #define ADSB_PLANE     RGB565(255, 220, 32)
 #define ADSB_CORE      RGB565(255, 255, 255)
@@ -296,6 +299,34 @@ static void adsb_ident_copy(const adsb_plane_t *p, uint8_t idx,
     out[i] = '\0';
 }
 
+static void fb_compose_adsb_header(fb_t *fb,
+                                   region_t r,
+                                   const adsb_plane_t *planes,
+                                   uint8_t n_planes,
+                                   const aux_roms_t *roms) {
+    char count_line[24];
+    char primary_line[24];
+    snprintf(count_line, sizeof(count_line), "%u ACFT", (unsigned)n_planes);
+    if (n_planes > 0) {
+        char ident[ADSB_IDENT_CHARS + 1u];
+        adsb_ident_copy(&planes[0], 0, ident);
+        snprintf(primary_line, sizeof(primary_line), "%s %uKT",
+                 ident, (unsigned)planes[0].speed_kt);
+    } else {
+        snprintf(primary_line, sizeof(primary_line), "NO TRAFFIC");
+    }
+
+    adsb_fill_rect(fb, r, 0, 0, r.w, ADSB_HEADER_H, ADSB_HEADER_BG);
+    adsb_fill_rect(fb, r, 0, ADSB_HEADER_H - 1, r.w, 1, RGB565(32, 44, 60));
+
+    text16_shadow(fb, r, 4, 3, "1090.00 MHZ", ADSB_HEADER_FG, roms->font_16x32);
+    text16_shadow(fb, r, 372, 3, "ADSB", ADSB_HEADER_FG, roms->font_16x32);
+
+    text16_shadow(fb, r, 4, 32, count_line, ADSB_HEADER_2, roms->font_16x32);
+    adsb_text_shadow(fb, r, 128, 40, "UCR 75 MI", ADSB_HEADER_DIM, roms->font_8x16);
+    adsb_text_shadow(fb, r, 240, 40, primary_line, ADSB_HEADER_DIM, roms->font_8x16);
+}
+
 void fb_compose_adsb_frame(fb_t *fb,
                            uint8_t layout,
                            const adsb_plane_t *planes,
@@ -352,26 +383,12 @@ void fb_compose_adsb_frame(fb_t *fb,
         int32_t tx = px + 8;
         int32_t ty = py - 20;
         if (ty < 0) ty = py + 8;
-        if (tx < 250 && ty < 88) ty = 88;
+        if (ty < ADSB_HEADER_H + 4) ty = py + 8;
+        if (ty < ADSB_HEADER_H + 4) ty = ADSB_HEADER_H + 4;
         if (tx > (int32_t)r.w - 112) tx = px - 112;
         if (tx < 0) tx = 0;
         adsb_text_shadow(fb, r, tx, ty, label, ADSB_LABEL_C, roms->font_8x16);
     }
 
-    char count_line[24];
-    char primary_line[24];
-    snprintf(count_line, sizeof(count_line), "%u ACFT", (unsigned)n_planes);
-    if (n_planes > 0) {
-        char ident[ADSB_IDENT_CHARS + 1u];
-        adsb_ident_copy(&planes[0], 0, ident);
-        snprintf(primary_line, sizeof(primary_line), "%s %uKT",
-                 ident, (unsigned)planes[0].speed_kt);
-    } else {
-        snprintf(primary_line, sizeof(primary_line), "NO TRAFFIC");
-    }
-    adsb_fill_rect(fb, r, 0, 0, 246, 84, ADSB_HEADER_BG);
-    text16_shadow(fb, r, 8, 4, "ADS-B", ADSB_LABEL_C, roms->font_16x32);
-    text16_shadow(fb, r, 8, 40, count_line, ADSB_HEADER_2, roms->font_16x32);
-    adsb_text_shadow(fb, r, 128, 22, "UCR 75 MI", ADSB_LABEL_C, roms->font_8x16);
-    adsb_text_shadow(fb, r, 128, 46, primary_line, ADSB_HEADER_2, roms->font_8x16);
+    fb_compose_adsb_header(fb, r, planes, n_planes, roms);
 }

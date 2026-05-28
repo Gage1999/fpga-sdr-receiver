@@ -297,7 +297,7 @@ uint16_t pixel_shader(uint16_t x, uint16_t y,
 ```
 
 Each `shade_*`:
-- `shade_status` — frequency text, large FM RDS text, demod label, centered volume bar, and 48×48 touch buttons via font + sprite ROM. The mode button uses large two-character labels (`FM`, `AM`, `GO`, `AD`) instead of small pictograms. The visible controls are tune up/down, volume up/down, mute, and mode; image modes hide the full status bar and expose only a floating MODE button.
+- `shade_status` — frequency text, large FM RDS text, demod label, centered volume bar, and 48×48 touch buttons via font + sprite ROM. The mode button uses visually centered two-character labels (`FM`, `AM`, `GO`, `AD`) instead of small pictograms. The visible controls are tune up/down, volume up/down, mute, and mode; image modes hide the full status bar and expose only a floating MODE button.
 - `shade_spectrum` — `bin_idx = (x * 256) >> log2(r.w)` (powers of 2 only — flag div); `bar_top = r.h - (bins[bin_idx] * r.h >> 16)`; foreground if `y >= bar_top`.
 - `shade_overlay` — touch cursor crosshair if `flags & TOUCH_ACTIVE`, modal frames, focused-button border.
 
@@ -324,7 +324,7 @@ void fb_compose_goes_panel(fb_t *fb, uint8_t layout,
 
 void fb_compose_clear(fb_t *fb, region_t r, uint16_t color);
 
-// ADS-B map: darkened static basemap + range rings, enlarged status header,
+// ADS-B map: darkened static basemap + range rings, FM/AM-style status header,
 // aircraft identifiers/altitude labels, and one high-contrast marker per
 // aircraft. Slow-update, so no back buffer. The real version blits a Riverside
 // map-image ROM; the fallback is procedural.
