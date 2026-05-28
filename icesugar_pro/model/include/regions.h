@@ -24,7 +24,7 @@ typedef struct {
 #define STATUS_H     64
 #define SPECTRUM_H   128
 #define GOES_FULL_H  480
-#define ADSB_FULL_H  480  // full-screen ADS-B map, with only a floating mode button
+#define ADSB_FULL_H  480  // full-screen ADS-B map with floating mode/zoom buttons
 
 region_t region_at(uint16_t x, uint16_t y, uint8_t layout);
 region_t region_for_kind(uint8_t kind, uint8_t layout);

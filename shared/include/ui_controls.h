@@ -16,13 +16,18 @@ static inline uint8_t ui_layout_is_image(uint8_t layout) {
 }
 
 static inline uint8_t ui_button_visible(uint8_t layout, uint8_t btn) {
-    if (ui_layout_is_image(layout)) return btn == UI_BTN_MODE;
-    return btn < UI_BTN_COUNT;
+    if (layout == (uint8_t)LAYOUT_ADSB_FULL) {
+        return btn == UI_BTN_MODE || btn == UI_BTN_ZOOM_IN || btn == UI_BTN_ZOOM_OUT;
+    }
+    if (layout == (uint8_t)LAYOUT_GOES_FULL) return btn == UI_BTN_MODE;
+    return btn < UI_BTN_MAIN_COUNT;
 }
 
 static inline uint8_t ui_button_slot(uint8_t btn) {
     switch (btn) {
     case UI_BTN_MODE:    return 0u;
+    case UI_BTN_ZOOM_IN: return 1u;
+    case UI_BTN_ZOOM_OUT:return 2u;
     case UI_BTN_MUTE:    return 1u;
     case UI_BTN_VOL_DN:  return 2u;
     case UI_BTN_VOL_UP:  return 3u;

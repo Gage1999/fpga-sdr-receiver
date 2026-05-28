@@ -116,7 +116,7 @@ int main(int argc, char **argv) {
                 SDL_Event patched = e;
                 patched.motion.x = lx; patched.motion.y = ly;
                 touch_event_t tev;
-                if (input_map_translate(&patched, lx, ly, &tev)) {
+                if (input_map_translate(&patched, lx, ly, pico.L.curr.layout, &tev)) {
                     hal_host_push_touch(&tev);
                 }
                 continue;
@@ -128,14 +128,14 @@ int main(int argc, char **argv) {
                 SDL_Event patched = e;
                 patched.button.x = lx; patched.button.y = ly;
                 touch_event_t tev;
-                if (input_map_translate(&patched, lx, ly, &tev)) {
+                if (input_map_translate(&patched, lx, ly, pico.L.curr.layout, &tev)) {
                     hal_host_push_touch(&tev);
                 }
                 continue;
             }
 
             touch_event_t tev;
-            if (input_map_translate(&e, g_mouse_x, g_mouse_y, &tev)) {
+            if (input_map_translate(&e, g_mouse_x, g_mouse_y, pico.L.curr.layout, &tev)) {
                 hal_host_push_touch(&tev);
             }
         }

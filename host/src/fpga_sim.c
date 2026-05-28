@@ -108,7 +108,8 @@ void fpga_sim_tick(fpga_sim_t *s, uint16_t *pixels_out) {
         adsb_plane_t planes[ADSB_MAX_PLANES];
         uint8_t np = synth_adsb_planes(planes, ADSB_MAX_PLANES);
         (void)synth_adsb_dirty();
-        fb_compose_adsb_frame(&s->fb, s->shadow_front.layout, planes, np, &s->roms);
+        fb_compose_adsb_frame(&s->fb, s->shadow_front.layout, planes, np,
+                              s->shadow_front.adsb_range_mi, &s->roms);
     }
 
     // Scan-out: render the full screen via the pixel shader.

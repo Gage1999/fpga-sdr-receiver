@@ -7,6 +7,7 @@ T_CASE(default_values_in_bounds) {
     T_EXPECT_EQ(s.version, (uint8_t)UI_STATE_VERSION);
     T_EXPECT(s.volume <= 100);
     T_EXPECT(s.brightness <= 100);
+    T_EXPECT_EQ(s.adsb_range_mi, 75);
     T_EXPECT_EQ(s.active_button, (uint8_t)UI_BTN_NONE);
     T_EXPECT_EQ(s.rds_text[0], '\0');
     return 0;

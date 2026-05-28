@@ -4,7 +4,7 @@
 #include <stdint.h>
 
 #ifndef UI_STATE_VERSION
-#define UI_STATE_VERSION 2u
+#define UI_STATE_VERSION 3u
 #endif
 
 typedef enum : uint8_t {
@@ -35,7 +35,10 @@ typedef enum : uint8_t {
 #define UI_BTN_VOL_DN    3u
 #define UI_BTN_MODE      4u
 #define UI_BTN_MUTE      5u
-#define UI_BTN_COUNT     6u
+#define UI_BTN_ZOOM_IN   6u
+#define UI_BTN_ZOOM_OUT  7u
+#define UI_BTN_COUNT     8u
+#define UI_BTN_MAIN_COUNT 6u
 
 #define UI_SPECTRUM_BINS 256
 
@@ -52,7 +55,8 @@ typedef struct __attribute__((packed)) {
     uint16_t touch_y;
     uint8_t  active_button;
     uint8_t  brightness;
-    uint8_t  reserved[2];
+    uint8_t  adsb_range_mi;
+    uint8_t  reserved[1];
     char     rds_text[32];
     uint16_t spectrum_bins[UI_SPECTRUM_BINS];
 } ui_state_t;

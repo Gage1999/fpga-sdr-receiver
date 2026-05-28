@@ -114,7 +114,7 @@ T_CASE(tuning_gated_to_spectrum_page) {
     return 0;
 }
 
-T_CASE(image_pages_only_expose_mode_button) {
+T_CASE(image_page_buttons_are_mode_or_adsb_zoom) {
     mock_reset();
     ui_logic_t L; ui_logic_init(&L);
     push_tap(UI_BTN_MODE); push_tap(UI_BTN_MODE); ui_logic_tick(&L);  // FM -> AM -> GOES
@@ -127,6 +127,18 @@ T_CASE(image_pages_only_expose_mode_button) {
     push_tap(UI_BTN_MODE); ui_logic_tick(&L);
     T_EXPECT_EQ(L.curr.demod, (uint8_t)DEMOD_ADSB);
     T_EXPECT_EQ(L.curr.layout, (uint8_t)LAYOUT_ADSB_FULL);
+
+    T_EXPECT_EQ(L.curr.adsb_range_mi, 75);
+    push_tap(UI_BTN_ZOOM_IN); ui_logic_tick(&L);
+    T_EXPECT_EQ(L.curr.adsb_range_mi, 50);
+    push_tap(UI_BTN_ZOOM_IN); ui_logic_tick(&L);
+    T_EXPECT_EQ(L.curr.adsb_range_mi, 25);
+    push_tap(UI_BTN_ZOOM_IN); ui_logic_tick(&L);
+    T_EXPECT_EQ(L.curr.adsb_range_mi, 25);
+    push_tap(UI_BTN_ZOOM_OUT); ui_logic_tick(&L);
+    T_EXPECT_EQ(L.curr.adsb_range_mi, 50);
+    push_tap(UI_BTN_ZOOM_OUT); ui_logic_tick(&L);
+    T_EXPECT_EQ(L.curr.adsb_range_mi, 75);
     return 0;
 }
 
@@ -270,7 +282,7 @@ int main(void) {
     T_RUN(mute_toggles);
     T_RUN(layout_follows_demod);
     T_RUN(tuning_gated_to_spectrum_page);
-    T_RUN(image_pages_only_expose_mode_button);
+    T_RUN(image_page_buttons_are_mode_or_adsb_zoom);
     T_RUN(volume_clamps_at_0_and_100);
     T_RUN(touch_down_then_drag_off_button_cancels);
     T_RUN(spi_emits_full_state_first);

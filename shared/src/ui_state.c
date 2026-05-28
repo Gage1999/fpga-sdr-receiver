@@ -24,5 +24,6 @@ void ui_state_default(ui_state_t *st) {
     st->touch_y       = 0;
     st->active_button = UI_BTN_NONE;
     st->brightness    = 80;
+    st->adsb_range_mi = 75;
     st->rds_text[0]   = '\0';
 }

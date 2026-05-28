@@ -90,7 +90,7 @@ T_CASE(adsb_frame_with_planes) {
         { 650, 350, "N45AA",  7000, 168 },
         { 770, 20,  "N738DL", 8900, 196 },
     };
-    fb_compose_adsb_frame((fb_t *)fb, (uint8_t)LAYOUT_ADSB_FULL, planes, 4, &roms);
+    fb_compose_adsb_frame((fb_t *)fb, (uint8_t)LAYOUT_ADSB_FULL, planes, 4, 75, &roms);
 
     uint16_t *snap = (uint16_t *)calloc((size_t)SCREEN_W * SCREEN_H, sizeof(uint16_t));
     test_fb_snapshot_back(fb, snap);

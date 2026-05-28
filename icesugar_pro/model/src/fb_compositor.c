@@ -123,9 +123,19 @@ typedef struct {
     int32_t y0;
     int32_t w;
     int32_t h;
+    int32_t src_x0;
+    int32_t src_y0;
+    int32_t src_w;
+    int32_t src_h;
 } adsb_view_t;
 
-static adsb_view_t adsb_view_for(region_t r) {
+static uint8_t adsb_range_clamp(uint8_t range_mi) {
+    if (range_mi <= 25u) return 25u;
+    if (range_mi <= 50u) return 50u;
+    return 75u;
+}
+
+static adsb_view_t adsb_view_for(region_t r, uint8_t range_mi) {
     int32_t avail_y = (r.h > ADSB_HEADER_H) ? ADSB_HEADER_H : 0;
     int32_t avail_h = (int32_t)r.h - avail_y;
     if (avail_h > 4) avail_h -= 4;  // keep the outer ring off the screen edge
@@ -145,6 +155,13 @@ static adsb_view_t adsb_view_for(region_t r) {
     v.y0 = avail_y + (((int32_t)r.h - avail_y) - h) / 2;
     v.w = w;
     v.h = h;
+    range_mi = adsb_range_clamp(range_mi);
+    v.src_w = (int32_t)((uint32_t)ADSB_BASEMAP_W * (uint32_t)range_mi / ADSB_RADIUS_MI);
+    v.src_h = (int32_t)((uint32_t)ADSB_BASEMAP_H * (uint32_t)range_mi / ADSB_RADIUS_MI);
+    if (v.src_w < 1) v.src_w = 1;
+    if (v.src_h < 1) v.src_h = 1;
+    v.src_x0 = ((int32_t)ADSB_BASEMAP_W - v.src_w) / 2;
+    v.src_y0 = ((int32_t)ADSB_BASEMAP_H - v.src_h) / 2;
     return v;
 }
 
@@ -152,21 +169,18 @@ static int32_t adsb_view_cx(adsb_view_t v) { return v.x0 + v.w / 2; }
 static int32_t adsb_view_cy(adsb_view_t v) { return v.y0 + v.h / 2; }
 
 static int32_t adsb_view_radius(adsb_view_t v, int32_t mi) {
-    return (int32_t)((uint32_t)v.h * (uint32_t)ADSB_R_OUTER * (uint32_t)mi /
-                    ((uint32_t)ADSB_BASEMAP_H * (uint32_t)ADSB_RADIUS_MI));
+    return (int32_t)((uint32_t)ADSB_R_OUTER * (uint32_t)mi * (uint32_t)v.h /
+                    ((uint32_t)ADSB_RADIUS_MI * (uint32_t)v.src_h));
 }
 
 static int32_t adsb_project_x(adsb_view_t v, uint16_t logical_x) {
-    uint16_t x = logical_x;
-    if (x >= ADSB_BASEMAP_W) x = ADSB_BASEMAP_W - 1u;
-    return v.x0 + (int32_t)((uint32_t)x * (uint32_t)v.w / ADSB_BASEMAP_W);
+    int32_t x = logical_x;
+    return v.x0 + (int32_t)(((int64_t)(x - v.src_x0) * v.w) / v.src_w);
 }
 
 static int32_t adsb_project_y(adsb_view_t v, uint16_t region_h, uint16_t logical_y) {
     int32_t src_y = (int32_t)logical_y - adsb_map_y0(region_h);
-    if (src_y < 0) src_y = 0;
-    if (src_y >= (int32_t)ADSB_BASEMAP_H) src_y = (int32_t)ADSB_BASEMAP_H - 1;
-    return v.y0 + (int32_t)((uint32_t)src_y * (uint32_t)v.h / ADSB_BASEMAP_H);
+    return v.y0 + (int32_t)(((int64_t)(src_y - v.src_y0) * v.h) / v.src_h);
 }
 
 static int adsb_on_ring_width(int32_t d2, int32_t R, int32_t width) {
@@ -188,8 +202,8 @@ static uint16_t adsb_night_pixel(uint16_t p) {
     return RGB565(nr, ng, nb);
 }
 
-static uint16_t adsb_basemap_pixel(region_t r, uint16_t lx, uint16_t ly) {
-    adsb_view_t v = adsb_view_for(r);
+static uint16_t adsb_basemap_pixel(region_t r, uint16_t lx, uint16_t ly, uint8_t range_mi) {
+    adsb_view_t v = adsb_view_for(r, range_mi);
     if ((int32_t)lx < v.x0 || (int32_t)lx >= v.x0 + v.w ||
         (int32_t)ly < v.y0 || (int32_t)ly >= v.y0 + v.h) {
         return RGB565(2, 4, 8);
@@ -214,21 +228,21 @@ static uint16_t adsb_basemap_pixel(region_t r, uint16_t lx, uint16_t ly) {
     return (d2 <= r_out2) ? ADSB_IN_BG : ADSB_OUT_BG;
 }
 
-static uint16_t adsb_real_basemap_pixel(region_t r, uint16_t lx, uint16_t ly) {
-    adsb_view_t v = adsb_view_for(r);
+static uint16_t adsb_real_basemap_pixel(region_t r, uint16_t lx, uint16_t ly, uint8_t range_mi) {
+    adsb_view_t v = adsb_view_for(r, range_mi);
     if ((int32_t)lx < v.x0 || (int32_t)lx >= v.x0 + v.w ||
         (int32_t)ly < v.y0 || (int32_t)ly >= v.y0 + v.h) {
         return RGB565(2, 4, 8);
     }
-    uint16_t src_x = (uint16_t)(((uint32_t)((int32_t)lx - v.x0) * ADSB_BASEMAP_W) / (uint32_t)v.w);
-    uint16_t src_y = (uint16_t)(((uint32_t)((int32_t)ly - v.y0) * ADSB_BASEMAP_H) / (uint32_t)v.h);
+    uint16_t src_x = (uint16_t)(v.src_x0 + ((int32_t)lx - v.x0) * v.src_w / v.w);
+    uint16_t src_y = (uint16_t)(v.src_y0 + ((int32_t)ly - v.y0) * v.src_h / v.h);
     if (src_x >= ADSB_BASEMAP_W) src_x = ADSB_BASEMAP_W - 1u;
     if (src_y >= ADSB_BASEMAP_H) src_y = ADSB_BASEMAP_H - 1u;
     return adsb_night_pixel(s_adsb_basemap[(uint32_t)src_y * ADSB_BASEMAP_W + src_x]);
 }
 
-static uint16_t adsb_overlay_pixel(region_t r, uint16_t lx, uint16_t ly, uint16_t base) {
-    adsb_view_t v = adsb_view_for(r);
+static uint16_t adsb_overlay_pixel(region_t r, uint16_t lx, uint16_t ly, uint16_t base, uint8_t range_mi) {
+    adsb_view_t v = adsb_view_for(r, range_mi);
     int32_t cx = adsb_view_cx(v);
     int32_t cy = adsb_view_cy(v);
     int32_t r25 = adsb_view_radius(v, 25);
@@ -369,6 +383,7 @@ static void fb_compose_adsb_header(fb_t *fb,
                                    region_t r,
                                    const adsb_plane_t *planes,
                                    uint8_t n_planes,
+                                   uint8_t range_mi,
                                    const aux_roms_t *roms) {
     char count_line[16];
     char ident_line[ADSB_IDENT_CHARS + 1u];
@@ -391,21 +406,23 @@ static void fb_compose_adsb_header(fb_t *fb,
     text16_shadow(fb, r, 512, 3, "ZOOM", ADSB_HEADER_FG, roms->font_16x32);
 
     text16_shadow(fb, r, 4, 32, count_line, ADSB_HEADER_2, roms->font_16x32);
-    text16_shadow(fb, r, 136, 32, "LEAD", ADSB_HEADER_DIM, roms->font_16x32);
-    text16_shadow(fb, r, 216, 32, ident_line, ADSB_HEADER_FG, roms->font_16x32);
-    text16_shadow(fb, r, 336, 32, speed_line, ADSB_HEADER_DIM, roms->font_16x32);
-    text16_shadow(fb, r, 512, 32, "25", ADSB_HEADER_DIM, roms->font_16x32);
-    text16_shadow(fb, r, 560, 32, "50", ADSB_HEADER_DIM, roms->font_16x32);
-    text16_shadow(fb, r, 608, 32, "75", ADSB_HEADER_2, roms->font_16x32);
+    text16_shadow(fb, r, 136, 32, ident_line, ADSB_HEADER_FG, roms->font_16x32);
+    text16_shadow(fb, r, 256, 32, speed_line, ADSB_HEADER_DIM, roms->font_16x32);
+    range_mi = adsb_range_clamp(range_mi);
+    text16_shadow(fb, r, 512, 32, "25", range_mi == 25u ? ADSB_HEADER_2 : ADSB_HEADER_DIM, roms->font_16x32);
+    text16_shadow(fb, r, 560, 32, "50", range_mi == 50u ? ADSB_HEADER_2 : ADSB_HEADER_DIM, roms->font_16x32);
+    text16_shadow(fb, r, 608, 32, "75", range_mi == 75u ? ADSB_HEADER_2 : ADSB_HEADER_DIM, roms->font_16x32);
 }
 
 void fb_compose_adsb_frame(fb_t *fb,
                            uint8_t layout,
                            const adsb_plane_t *planes,
                            uint8_t n_planes,
+                           uint8_t range_mi,
                            const aux_roms_t *roms) {
     region_t r = region_for_kind(R_ADSB, layout);
     if (r.kind != R_ADSB || r.w == 0 || r.h == 0) return;
+    range_mi = adsb_range_clamp(range_mi);
 
     uint16_t n = r.w < SCREEN_W ? r.w : SCREEN_W;
 
@@ -414,14 +431,14 @@ void fb_compose_adsb_frame(fb_t *fb,
     uint16_t scratch[SCREEN_W];
     for (uint16_t ly = 0; ly < r.h; ly++) {
         for (uint16_t lx = 0; lx < n; lx++) {
-            uint16_t base = have_real_map ? adsb_real_basemap_pixel(r, lx, ly)
-                                          : adsb_basemap_pixel(r, lx, ly);
-            scratch[lx] = adsb_overlay_pixel(r, lx, ly, base);
+            uint16_t base = have_real_map ? adsb_real_basemap_pixel(r, lx, ly, range_mi)
+                                          : adsb_basemap_pixel(r, lx, ly, range_mi);
+            scratch[lx] = adsb_overlay_pixel(r, lx, ly, base, range_mi);
         }
         fb_write_row(fb, r.x0, (uint16_t)(r.y0 + ly), scratch, n);
     }
 
-    adsb_view_t view = adsb_view_for(r);
+    adsb_view_t view = adsb_view_for(r, range_mi);
     int32_t map_cx = adsb_view_cx(view);
     int32_t map_cy = adsb_view_cy(view);
     int32_t r25 = adsb_view_radius(view, 25);
@@ -469,5 +486,5 @@ void fb_compose_adsb_frame(fb_t *fb,
         adsb_text_shadow(fb, r, tx, ty, label, ADSB_LABEL_C, roms->font_8x16);
     }
 
-    fb_compose_adsb_header(fb, r, planes, n_planes, roms);
+    fb_compose_adsb_header(fb, r, planes, n_planes, range_mi, roms);
 }

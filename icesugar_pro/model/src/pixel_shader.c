@@ -49,9 +49,10 @@ static uint16_t font16_row_for(const aux_roms_t *roms, char c, uint8_t gy) {
     return roms->font_16x32[(uint32_t)(idx - FONT_16X32_FIRST) * FONT_16X32_H + gy];
 }
 
-static uint8_t mode_label_ink(const char *label, int32_t rel_x, int32_t rel_y,
-                              const aux_roms_t *roms) {
-    if (rel_x < 0 || rel_x >= 2 * FONT_16X32_W ||
+static uint8_t label_ink(const char *label, uint8_t label_chars,
+                         int32_t rel_x, int32_t rel_y,
+                         const aux_roms_t *roms) {
+    if (rel_x < 0 || rel_x >= (int32_t)label_chars * FONT_16X32_W ||
         rel_y < 0 || rel_y >= FONT_16X32_H) return 0u;
 
     uint8_t ch_idx = (uint8_t)(rel_x / FONT_16X32_W);
@@ -61,16 +62,17 @@ static uint8_t mode_label_ink(const char *label, int32_t rel_x, int32_t rel_y,
     return (row & (uint16_t)(1u << (15 - gx))) != 0;
 }
 
-static void mode_label_origin(const char *label, const aux_roms_t *roms,
-                              int32_t *out_x, int32_t *out_y) {
-    int32_t min_x = 2 * FONT_16X32_W;
+static void label_origin(const char *label, uint8_t label_chars,
+                         const aux_roms_t *roms,
+                         int32_t *out_x, int32_t *out_y) {
+    int32_t min_x = (int32_t)label_chars * FONT_16X32_W;
     int32_t min_y = FONT_16X32_H;
     int32_t max_x = -1;
     int32_t max_y = -1;
 
     for (int32_t y = 0; y < FONT_16X32_H; y++) {
-        for (int32_t x = 0; x < 2 * FONT_16X32_W; x++) {
-            if (!mode_label_ink(label, x, y, roms)) continue;
+        for (int32_t x = 0; x < (int32_t)label_chars * FONT_16X32_W; x++) {
+            if (!label_ink(label, label_chars, x, y, roms)) continue;
             if (x < min_x) min_x = x;
             if (x > max_x) max_x = x;
             if (y < min_y) min_y = y;
@@ -90,9 +92,9 @@ static void mode_label_origin(const char *label, const aux_roms_t *roms,
     *out_y = ((int32_t)UI_STATUS_BTN_W - ink_h) / 2 - min_y;
 }
 
-static uint16_t draw_mode_button(uint16_t local_x, uint16_t local_y,
-                                 uint16_t bg,
-                                 const ui_state_t *ui,
+static uint16_t draw_text_button(uint16_t local_x, uint16_t local_y,
+                                 uint16_t bg, const char *label,
+                                 uint8_t label_chars, uint8_t active,
                                  const aux_roms_t *roms) {
     const uint16_t fill = RGB565(24, 32, 42);
     const uint16_t edge = RGB565(156, 184, 204);
@@ -107,17 +109,24 @@ static uint16_t draw_mode_button(uint16_t local_x, uint16_t local_y,
         px = RGB565(48, 60, 74);
     }
 
-    const char *label = mode_button_label(ui);
     int32_t text_x;
     int32_t text_y;
-    mode_label_origin(label, roms, &text_x, &text_y);
-    if (mode_label_ink(label,
-                       (int32_t)local_x - text_x,
-                       (int32_t)local_y - text_y,
-                       roms)) px = fg;
+    label_origin(label, label_chars, roms, &text_x, &text_y);
+    if (label_ink(label, label_chars,
+                  (int32_t)local_x - text_x,
+                  (int32_t)local_y - text_y,
+                  roms)) px = fg;
 
-    if (ui->active_button == UI_BTN_MODE && px != bg) px = brighten_rgb565(px, 48u);
+    if (active && px != bg) px = brighten_rgb565(px, 48u);
     return px;
+}
+
+static uint16_t draw_mode_button(uint16_t local_x, uint16_t local_y,
+                                 uint16_t bg,
+                                 const ui_state_t *ui,
+                                 const aux_roms_t *roms) {
+    return draw_text_button(local_x, local_y, bg, mode_button_label(ui), 2u,
+                            ui->active_button == UI_BTN_MODE, roms);
 }
 
 static uint16_t draw_status_button(uint16_t lx, uint16_t ly,
@@ -134,6 +143,14 @@ static uint16_t draw_status_button(uint16_t lx, uint16_t ly,
     uint16_t local_y = (uint16_t)(ly - y0);
     if (btn_id == UI_BTN_MODE) {
         return draw_mode_button(local_x, local_y, bg, ui, roms);
+    }
+    if (btn_id == UI_BTN_ZOOM_IN) {
+        return draw_text_button(local_x, local_y, bg, "+", 1u,
+                                ui->active_button == UI_BTN_ZOOM_IN, roms);
+    }
+    if (btn_id == UI_BTN_ZOOM_OUT) {
+        return draw_text_button(local_x, local_y, bg, "-", 1u,
+                                ui->active_button == UI_BTN_ZOOM_OUT, roms);
     }
 
     uint16_t spx = (uint16_t)((uint32_t)local_x * SPRITE_W / UI_STATUS_BTN_W);

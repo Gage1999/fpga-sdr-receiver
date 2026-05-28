@@ -75,6 +75,7 @@ void fb_compose_adsb_frame(fb_t *fb,
                            uint8_t layout,
                            const adsb_plane_t *planes,
                            uint8_t n_planes,
+                           uint8_t range_mi,
                            const aux_roms_t *roms);
 
 #endif
