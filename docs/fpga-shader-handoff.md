@@ -1,6 +1,6 @@
 # Pixel shader / FPGA integration — handoff
 
-**Last updated:** 2026-05-28
+**Last updated:** 2026-05-29
 
 Snapshot of where the FPGA-side renderer work stands, what's done, and
 what's next. Companion to `fpga-sdr-receiver-architecture.md` (the
@@ -266,6 +266,14 @@ make synth_shader     # yosys synth_ecp5 -> build/shader.json (+ build/shader_sy
 If any of these regress, something landed on `main` that shouldn't have.
 The parity harness is the canary for the shader; the goldens are the
 canary for the C model.
+
+**In CI** (`.github/workflows/ci.yml`): the `build-and-test` job runs the
+C goldens (ctest) on Linux + macOS; the `shader-rtl` job (Linux, apt
+verilator) runs `make -C icesugar_pro/sim lint` then `make … run`, so the
+shader RTL canary fires on every push/PR — not just when someone
+remembers to run it locally. The bitstream build (`make build/top.bit`)
+and `synth_shader` still need the oss-cad-suite toolchain and are
+local-only.
 
 ---
 

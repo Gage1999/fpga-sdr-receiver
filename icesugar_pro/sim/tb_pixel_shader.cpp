@@ -1,4 +1,4 @@
-// Verilator parity harness for icesugar_pro/sim/pixel_shader.sv.
+// Verilator parity harness for icesugar_pro/src/pixel_shader.sv (bare core).
 //
 // Drives the C reference model and the SV `pixel_shader` with identical
 // per-pixel inputs and reports byte-equality stats. Until every shade_* is
