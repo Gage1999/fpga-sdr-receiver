@@ -112,12 +112,15 @@ void fpga_sim_tick(fpga_sim_t *s, uint16_t *pixels_out) {
                               s->shadow_front.adsb_range_mi, &s->roms);
     }
 
-    // Scan-out: render the full screen via the pixel shader.
+    // Scan-out: render the full screen via the pixel shader. Prepare runs
+    // once per V-sync; on hardware this is the SV `shader_state` snapshot.
+    shader_state_t shader_st;
+    pixel_shader_prepare(&s->shadow_front, &s->roms, &shader_st);
     for (uint16_t y = 0; y < SCREEN_H; y++) {
         for (uint16_t x = 0; x < SCREEN_W; x++) {
             uint16_t under = fb_read(&s->fb, x, y);
             pixels_out[(size_t)y * SCREEN_W + x] =
-                pixel_shader(x, y, under, &s->shadow_front, &s->roms);
+                pixel_shader(x, y, under, &shader_st, &s->roms);
         }
     }
 

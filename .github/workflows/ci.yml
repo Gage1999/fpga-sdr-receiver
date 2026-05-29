@@ -33,3 +33,28 @@ jobs:
 
       - name: ctest
         run: ctest --test-dir build --output-on-failure
+
+  # Exercises the SystemVerilog shader against the C reference model. The C
+  # golden tests above prove the spec; this proves the RTL matches the spec.
+  # Without it, pixel_shader.sv could regress while ctest stays green.
+  shader-rtl:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build verilator python3
+
+      - name: configure (host harness off — only need render_model + shared)
+        run: cmake -S . -B build -G Ninja -DBUILD_HOST_HARNESS=OFF
+
+      - name: build C reference archives
+        run: cmake --build build --target render_model shared
+
+      - name: lint synthesizable RTL
+        run: make -C icesugar_pro/sim lint
+
+      - name: parity + ROM equivalence (shader core, wrapper, .mem ROMs)
+        run: make -C icesugar_pro/sim run
