@@ -1,5 +1,5 @@
 
-.PHONY: all prog sim sim_i2s sim_fm sim_lcd sim_fft sim_sdram sim_line_cache sim_scan_out sim_arb sim_compositor sim_integration sim_sdram_test sim_sdram_color prog_sdram_test prog_sdram_color prog_sdram_color75 prog_sdram_color_ci prog_sdram_cal prog_lcd_test prog_spi_rx_test prog_i2s_tone_test prog_full_audio_tone prog_fm_chain_test prog_fm_spi12 prog_fm_spi8 prog_fm_spi8_paced clean
+.PHONY: all prog sim sim_i2s sim_fm sim_lcd sim_fft sim_sdram sim_sdram_bl sim_line_cache sim_scan_out sim_arb sim_compositor sim_integration sim_sdram_test sim_sdram_color prog_sdram_test prog_sdram_color prog_sdram_color75 prog_sdram_color_ci prog_sdram_cal prog_sdram_cal_guard prog_sdram_cal_bl8 prog_sdram_cal_75 prog_lcd_test prog_spi_rx_test prog_i2s_tone_test prog_full_audio_tone prog_fm_chain_test prog_fm_spi12 prog_fm_spi8 prog_fm_spi8_paced clean
 
 SV_SRCS = src/top.sv \
           src/spi_cmd_slave.sv \
@@ -120,6 +120,36 @@ build/sdram_color.bit: $(SDRAM_COLOR_SRCS) $(LPF) | build
 	nextpnr-ecp5 $(DEVICE) --json build/sdram_color.json --textcfg build/sdram_color.cfg --lpf $(LPF) --freq 25
 	ecppack build/sdram_color.cfg $@
 
+# Phase 4+5 integration: live waterfall (generator -> FIFO -> compositor -> arb -> ctrl;
+# scan_out -> line_cache -> LCD). Half-page layout throughout.
+build/sdram_wf.bit: $(SDRAM_WF_SRCS) $(LPF) | build
+	yosys -p "synth_ecp5 -top top_sdram_wf -json build/sdram_wf.json" $(SDRAM_WF_SRCS)
+	nextpnr-ecp5 $(DEVICE) --json build/sdram_wf.json --textcfg build/sdram_wf.cfg --lpf $(LPF) --freq 25
+	ecppack build/sdram_wf.cfg $@
+
+prog_sdram_wf: build/sdram_wf.bit
+	icesprog $<
+
+# Diagnostic: compositor tied off (read path + arbiter only). If the streaks vanish here,
+# they come from the compositor writes / read-write interleaving, not the read path.
+build/sdram_wf_nowr.bit: $(SDRAM_WF_SRCS) $(LPF) | build
+	yosys -p "chparam -set WRITE_EN 0 top_sdram_wf; synth_ecp5 -top top_sdram_wf -json build/sdram_wf_nowr.json" $(SDRAM_WF_SRCS)
+	nextpnr-ecp5 $(DEVICE) --json build/sdram_wf_nowr.json --textcfg build/sdram_wf_nowr.cfg --lpf $(LPF) --freq 25
+	ecppack build/sdram_wf_nowr.cfg $@
+
+prog_sdram_wf_nowr: build/sdram_wf_nowr.bit
+	icesprog $<
+
+# Diagnostic: writes happen but the display doesn't scroll (wf_base_row held 0). Removes
+# scroll tearing as a confound -- you should see the static grey gradient if writes are clean.
+build/sdram_wf_static.bit: $(SDRAM_WF_SRCS) $(LPF) | build
+	yosys -p "chparam -set FREEZE_SCROLL 1 top_sdram_wf; synth_ecp5 -top top_sdram_wf -json build/sdram_wf_static.json" $(SDRAM_WF_SRCS)
+	nextpnr-ecp5 $(DEVICE) --json build/sdram_wf_static.json --textcfg build/sdram_wf_static.cfg --lpf $(LPF) --freq 25
+	ecppack build/sdram_wf_static.cfg $@
+
+prog_sdram_wf_static: build/sdram_wf_static.bit
+	icesprog $<
+
 prog_sdram_color: build/sdram_color.bit
 	icesprog $<
 
@@ -206,6 +236,43 @@ build/sdram_cal_edge.bit: src/top_sdram_cal.sv src/sdram_ctrl.sv src/scan_timing
 prog_sdram_cal_edge: build/sdram_cal_edge.bit
 	icesprog $<
 
+# ===========================================================================
+# Doc-preserving fix candidates. All use the page-crossing SPLIT access (the
+# framebuffer-like case that streaks). 4 bands = the 4 read-capture phases;
+# all-green = that variant read+wrote the boundary with 0 errors -> the fix
+# preserves the contiguous layout. Still red = that variant does not help.
+# ===========================================================================
+
+# (1) Guard cycles: full-page burst, but defer PRECHARGE a couple of NOPs after the
+# last beat. Tests whether the boundary marginality is just burst-termination timing.
+build/sdram_cal_guard.bit: src/top_sdram_cal.sv src/sdram_ctrl.sv src/scan_timing.sv $(LPF) | build
+	yosys -p "chparam -set SPLIT 1 -set RD_GUARD 2 -set WR_GUARD 2 top_sdram_cal; synth_ecp5 -top top_sdram_cal -json build/sdram_cal_guard.json" src/top_sdram_cal.sv src/sdram_ctrl.sv src/scan_timing.sv
+	nextpnr-ecp5 $(DEVICE) --json build/sdram_cal_guard.json --textcfg build/sdram_cal_guard.cfg --lpf $(LPF) --freq 25
+	ecppack build/sdram_cal_guard.cfg $@
+
+prog_sdram_cal_guard: build/sdram_cal_guard.bit
+	icesprog $<
+
+# (2) BL=8 chunks: never use full-page streaming/wrap; issue a fresh READ/WRITE per 8
+# words. Tests whether the full-page burst mode itself is the unreliable part.
+build/sdram_cal_bl8.bit: src/top_sdram_cal.sv src/sdram_ctrl.sv src/scan_timing.sv $(LPF) | build
+	yosys -p "chparam -set SPLIT 1 -set BURST_MODE 1 top_sdram_cal; synth_ecp5 -top top_sdram_cal -json build/sdram_cal_bl8.json" src/top_sdram_cal.sv src/sdram_ctrl.sv src/scan_timing.sv
+	nextpnr-ecp5 $(DEVICE) --json build/sdram_cal_bl8.json --textcfg build/sdram_cal_bl8.cfg --lpf $(LPF) --freq 25
+	ecppack build/sdram_cal_bl8.cfg $@
+
+prog_sdram_cal_bl8: build/sdram_cal_bl8.bit
+	icesprog $<
+
+# (3) Lower clock: same full-page design at 75 MHz (CLKFB 3, CLKOP 8 -> VCO 600, pixel 30).
+# Tests whether the boundary is a pure setup/hold or signal-integrity margin issue.
+build/sdram_cal_75.bit: src/top_sdram_cal.sv src/sdram_ctrl.sv src/scan_timing.sv $(LPF) | build
+	yosys -p "chparam -set SPLIT 1 -set CLKFB_DIV 3 -set CLKOP_DIV 8 -set CLKOS_DIV 20 -set CLKOS2_DIV 8 top_sdram_cal; synth_ecp5 -top top_sdram_cal -json build/sdram_cal_75.json" src/top_sdram_cal.sv src/sdram_ctrl.sv src/scan_timing.sv
+	nextpnr-ecp5 $(DEVICE) --json build/sdram_cal_75.json --textcfg build/sdram_cal_75.cfg --lpf $(LPF) --freq 25
+	ecppack build/sdram_cal_75.cfg $@
+
+prog_sdram_cal_75: build/sdram_cal_75.bit
+	icesprog $<
+
 # WSL-friendly flash: copy the bitstream onto the iCELink mass-storage drive.
 # No USB passthrough needed. Set ICELINK to wherever Windows mounted the iCELink
 # drive (e.g. make prog_sdram_test_drive ICELINK=/mnt/g).
@@ -239,6 +306,16 @@ sim_fft: tb/tb_fft256.sv src/fft256.sv src/butterfly.sv src/twiddle_rom.sv | bui
 sim_sdram: tests/sdram_ctrl_tb.sv src/sdram_ctrl.sv | build
 	iverilog -g2012 -o build/sdram_ctrl.sim tests/sdram_ctrl_tb.sv src/sdram_ctrl.sv
 	vvp build/sdram_ctrl.sim
+
+sim_sdram_bl: tests/sdram_ctrl_bl_tb.sv src/sdram_ctrl.sv | build
+	iverilog -g2012 -o build/sdram_ctrl_bl.sim tests/sdram_ctrl_bl_tb.sv src/sdram_ctrl.sv
+	vvp build/sdram_ctrl_bl.sim
+
+SDRAM_WF_SRCS = src/top_sdram_wf.sv src/sdram_ctrl.sv src/sdram_arb.sv src/scan_out.sv \
+                src/compositor.sv src/line_cache.sv src/scan_timing.sv src/async_fifo.sv
+sim_sdram_wf: tests/sdram_wf_tb.sv $(SDRAM_WF_SRCS) | build
+	iverilog -g2012 -DSIMULATION -o build/sdram_wf.sim tests/sdram_wf_tb.sv $(SDRAM_WF_SRCS)
+	vvp build/sdram_wf.sim
 
 sim_line_cache: tests/line_cache_tb.sv src/line_cache.sv | build
 	iverilog -g2012 -o build/line_cache.sim tests/line_cache_tb.sv src/line_cache.sv

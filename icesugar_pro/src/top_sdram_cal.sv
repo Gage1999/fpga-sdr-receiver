@@ -19,8 +19,17 @@ module top_sdram_cal #(
                                      // 1 = 600-word access split across a row boundary
                                      //     (512 in row 0 + 88 in row 1) like the framebuffer path.
     parameter int TEST_COL     = 0,  // (SPLIT=0) start column within the row
-    parameter int TEST_LEN     = 256 // (SPLIT=0) burst length. col0/len256=clean baseline;
+    parameter int TEST_LEN     = 256,// (SPLIT=0) burst length. col0/len256=clean baseline;
                                      // col0/len512=full page; col256/len256=ends at page edge.
+    // ---- doc-preserving fix candidates (pass through to sdram_ctrl) ----
+    parameter int BURST_MODE   = 0,  // 0 = full-page burst, 1 = fixed BL=8 chunks (no page wrap)
+    parameter int RD_GUARD     = 0,  // extra NOP cycles before PRECHARGE after a read burst
+    parameter int WR_GUARD     = 0,  // extra NOP cycles before PRECHARGE after a write burst
+    // ---- PLL divisors (default = 100 MHz; override for the lower-frequency variant) ----
+    parameter int CLKFB_DIV    = 4,  // f_sdram = 25 MHz * CLKFB_DIV  (4->100, 3->75)
+    parameter int CLKOP_DIV    = 6,  // VCO = f_sdram * CLKOP_DIV must stay in 400-800 MHz
+    parameter int CLKOS_DIV    = 20, // pixel clock divisor (VCO / CLKOS_DIV ~= 30 MHz)
+    parameter int CLKOS2_DIV   = 6   // clk90 (= sdram, +90 deg) divisor; keep = CLKOP_DIV
 ) (
     input  logic        CLK,
     output logic        LCD_CLK,
@@ -65,11 +74,11 @@ module top_sdram_cal #(
         .DPHASE_SOURCE("DISABLED"),
         .OUTDIVIDER_MUXA("DIVA"), .OUTDIVIDER_MUXB("DIVB"), .OUTDIVIDER_MUXC("DIVC"), .OUTDIVIDER_MUXD("DIVD"),
         .CLKI_DIV(1),
-        .CLKOP_ENABLE("ENABLED"),  .CLKOP_DIV(6),  .CLKOP_CPHASE(2), .CLKOP_FPHASE(0),
-        .CLKOS_ENABLE("ENABLED"),  .CLKOS_DIV(20), .CLKOS_CPHASE(2), .CLKOS_FPHASE(0),
-        .CLKOS2_ENABLE("ENABLED"), .CLKOS2_DIV(6), .CLKOS2_CPHASE(3), .CLKOS2_FPHASE(4),
+        .CLKOP_ENABLE("ENABLED"),  .CLKOP_DIV(CLKOP_DIV),  .CLKOP_CPHASE(2), .CLKOP_FPHASE(0),
+        .CLKOS_ENABLE("ENABLED"),  .CLKOS_DIV(CLKOS_DIV),  .CLKOS_CPHASE(2), .CLKOS_FPHASE(0),
+        .CLKOS2_ENABLE("ENABLED"), .CLKOS2_DIV(CLKOS2_DIV), .CLKOS2_CPHASE(3), .CLKOS2_FPHASE(4),
         .CLKOS3_ENABLE("DISABLED"), .CLKOS3_DIV(1), .CLKOS3_CPHASE(0), .CLKOS3_FPHASE(0),
-        .FEEDBK_PATH("CLKOP"), .CLKFB_DIV(4)
+        .FEEDBK_PATH("CLKOP"), .CLKFB_DIV(CLKFB_DIV)
     ) u_pll (
         .CLKI(CLK), .CLKFB(clk_sdram), .CLKOP(clk_sdram), .CLKOS(clk_pix), .CLKOS2(clk90), .CLKOS3(),
         .RST(1'b0), .STDBY(1'b0),
@@ -108,7 +117,7 @@ module top_sdram_cal #(
     logic [15:0] wr_data, rd_data, dq_out;
     logic        dq_oe;
 
-    sdram_ctrl #(.RD_LAT(3)) u_ctrl (
+    sdram_ctrl #(.RD_LAT(3), .BURST_MODE(BURST_MODE), .RD_GUARD(RD_GUARD), .WR_GUARD(WR_GUARD)) u_ctrl (
         .clk(clk_sdram), .rst(sys_rst),
         .req_valid(req_valid), .req_wr(req_wr), .req_addr(req_addr), .req_len(req_len), .req_ready(req_ready),
         .wr_data(wr_data), .wr_valid(wr_valid), .wr_ready(wr_ready),

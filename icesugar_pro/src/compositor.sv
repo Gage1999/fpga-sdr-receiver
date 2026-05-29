@@ -9,7 +9,13 @@ module compositor #(
     parameter int ROW_WORDS = 800,
     parameter int PAGE_WORDS = 512,
     parameter int NLINES     = 480,
-    parameter int FB_BASE_W  = 0
+    parameter int FB_BASE_W  = 0,
+    parameter int MAX_BURST  = 512,   // cap burst length; <512 avoids the marginal full-page access
+    parameter bit HALF_PAGE  = 0,     // 1 = store 256 words per SDRAM row (cols 0..255 only) so no
+                                      //     access touches the marginal page boundary. MUST match scan_out.
+    parameter bit TEST_PATTERN = 0    // 1 = ignore mag_in; pixel value = a ramp of the fill column
+                                      //     (fill_cnt). Row-aligned by construction (no dependence on
+                                      //     the generator/CDC row phase) — isolates the SDRAM path.
 ) (
     input  logic        clk,          // SDRAM clock
     input  logic        rst,
@@ -41,8 +47,13 @@ module compositor #(
     endfunction
 
     logic [15:0] linebuf [0:ROW_WORDS-1];
+    // Registered read of the line buffer. The buffer maps to block RAM (DP16KD), which has
+    // NO asynchronous read on ECP5 — reading it combinationally works in behavioral sim but
+    // returns stale data on silicon. So register the read explicitly and add a fetch cycle
+    // (S_FETCH) so the FSM accounts for the 1-cycle latency; sim and hardware then match.
+    logic [15:0] linebuf_q;
 
-    typedef enum logic [1:0] { S_FILL, S_REQ, S_WRITE, S_WAIT } state_e;
+    typedef enum logic [2:0] { S_FILL, S_REQ, S_FETCH, S_WRITE, S_WAIT } state_e;
     state_e st;
 
     logic [10:0] fill_cnt;     // 0..ROW_WORDS
@@ -52,14 +63,27 @@ module compositor #(
     logic [9:0]  beats;        // wr beats accepted this segment
     logic [8:0]  wf_write_row; // line currently being written
 
-    wire [8:0]  col_w    = cur_word[8:0];
-    wire [10:0] rem_page = PAGE_WORDS[10:0] - {2'b0, col_w};
-    wire [10:0] seg_w    = (rem_page < words_left) ? rem_page : words_left;
+    // Registered line-buffer read (1-cycle latency; S_FETCH compensates). See note above.
+    always_ff @(posedge clk) linebuf_q <= linebuf[rd_ptr];
+
+    // Words used per SDRAM row: 512 (contiguous) or 256 (half-page: cols 0..255 only).
+    // Identical to scan_out so a written pixel and the scanned-out pixel resolve to the
+    // same SDRAM address. byte addr = (row << 10) | (col << 1); row = cur_word/RW, col = cur_word%RW.
+    localparam int RW = HALF_PAGE ? 256 : 512;
+    wire [9:0]  col_w   = 10'(cur_word % RW);
+    wire [10:0] rem_row = 11'(RW) - {1'b0, col_w};
+    wire [10:0] seg_cap = (rem_row < words_left) ? rem_row : words_left;
+    wire [10:0] seg_w   = (seg_cap < MAX_BURST[10:0]) ? seg_cap : MAX_BURST[10:0];
+    // Register the segment length so the min()/subtract cone stays off the req_len/FSM
+    // timing paths (cur_word is stable through a segment, so seg_r is valid when used).
+    // Same fix scan_out uses; matters once the arbiter mux is in the request path.
+    logic [10:0] seg_r;
+    always_ff @(posedge clk) seg_r <= seg_w;
 
     assign req_wr   = 1'b1;
-    assign req_addr = 25'(cur_word) << 1;
-    assign req_len  = seg_w[9:0];
-    assign wr_data  = linebuf[rd_ptr];
+    assign req_addr = (25'(cur_word / RW) << 10) | (25'(col_w) << 1);
+    assign req_len  = seg_r[9:0];
+    assign wr_data  = linebuf_q;
     assign busy     = (st != S_FILL) || (fill_cnt != 11'd0);
 
     always_ff @(posedge clk) begin
@@ -80,7 +104,13 @@ module compositor #(
                     req_valid <= 1'b0;
                     wr_valid  <= 1'b0;
                     if (mag_valid) begin
-                        linebuf[fill_cnt[9:0]] <= palette(mag_in);
+                        // TEST_PATTERN: value from the fill column (fill_cnt), so every row is
+                        // identical and column-aligned by construction (no dependence on the mag
+                        // stream / CDC phase). Uses 4 DISTINCT vertical bars ({col[9:8],0}) =
+                        // black / dim / mid / bright across the 4 quarters — visually unmistakable
+                        // (so you can tell this build apart) and column order is obvious.
+                        // mag_valid still paces the fill. Real mode uses mag_in.
+                        linebuf[fill_cnt[9:0]] <= palette(TEST_PATTERN ? {fill_cnt[9:8], 6'd0} : mag_in);
                         if (fill_cnt == ROW_WORDS[10:0] - 11'd1) begin
                             // row complete -> start the SDRAM write of line wf_write_row
                             fill_cnt   <= 11'd0;
@@ -99,22 +129,33 @@ module compositor #(
                     beats     <= 10'd0;
                     if (req_valid && req_ready) begin
                         req_valid <= 1'b0;
-                        wr_valid  <= 1'b1;     // start presenting data
+                        // linebuf_q already holds linebuf[rd_ptr] (rd_ptr stable through S_REQ),
+                        // so the first beat can present immediately.
+                        wr_valid  <= 1'b1;
                         st        <= S_WRITE;
                     end
+                end
+
+                // Re-prime linebuf_q for the next beat (registered read has 1-cycle latency).
+                S_FETCH: begin
+                    wr_valid <= 1'b0;
+                    st       <= S_WRITE;
                 end
 
                 S_WRITE: begin
                     wr_valid <= 1'b1;
                     if (wr_ready && wr_valid) begin
-                        rd_ptr <= rd_ptr + 10'd1;
-                        if (beats == seg_w[9:0] - 10'd1) begin
+                        if (beats == seg_r[9:0] - 10'd1) begin
                             wr_valid   <= 1'b0;
-                            cur_word   <= cur_word + 19'(seg_w);
-                            words_left <= words_left - seg_w;
+                            rd_ptr     <= rd_ptr + 10'd1;
+                            cur_word   <= cur_word + 19'(seg_r);
+                            words_left <= words_left - seg_r;
                             st         <= S_WAIT;
                         end else begin
-                            beats <= beats + 10'd1;
+                            rd_ptr <= rd_ptr + 10'd1;  // advance; S_FETCH lets linebuf_q catch up
+                            beats  <= beats + 10'd1;
+                            wr_valid <= 1'b0;
+                            st     <= S_FETCH;
                         end
                     end
                 end

@@ -3,9 +3,10 @@
 // Feeds two rows of magnitudes; the compositor maps them to RGB565 and writes
 // them into the framebuffer (line 0 then line 1) through sdram_ctrl. The
 // behavioral SDRAM model captures the writes; we then read its memory back and
-// confirm each pixel landed at the correct contiguous-framebuffer address with
-// the right palette value. Row 0 -> 2-segment write (start col 0); row 1 ->
-// 3-segment write (start col 288).
+// confirm each pixel landed at the correct HALF-PAGE framebuffer address (256
+// words/row, cols 0..255 only — the same mapping scan_out reads) with the right
+// palette value. With half-page, an 800-word line spans 4 SDRAM rows; line 1
+// starts mid-row (word 800 -> row 3, col 32), exercising a partial first segment.
 
 `timescale 1ns/1ps
 
@@ -35,7 +36,7 @@ module compositor_tb;
     logic [15:0] sdram_dq_out, sdram_dq_in;
     logic        sdram_dq_oe;
 
-    compositor #(.ROW_WORDS(ROW_WORDS)) dut_comp (
+    compositor #(.ROW_WORDS(ROW_WORDS), .HALF_PAGE(1), .MAX_BURST(256)) dut_comp (
         .clk(clk), .rst(rst),
         .mag_in(mag_in), .mag_valid(mag_valid), .wf_base_row(wf_base_row),
         .req_valid(req_valid), .req_wr(req_wr), .req_addr(req_addr), .req_len(req_len),
@@ -113,20 +114,28 @@ module compositor_tb;
         end
     endtask
 
+    // Half-page SDRAM flat address for framebuffer word W (must match compositor/scan_out):
+    // row = W/256, col = W%256, model flat = row*512 + col.
+    function automatic int fb_flat(input int w);
+        fb_flat = (w / 256) * 512 + (w % 256);
+    endfunction
+
     task automatic check_row(input int line, input int row);
-        int c; logic [15:0] got, exp;
+        int c, w; logic [15:0] got, exp;
         begin
             for (c = 0; c < ROW_WORDS; c++) begin
-                got = sdram_mem[line*ROW_WORDS + c];
+                w   = line*ROW_WORDS + c;
+                got = sdram_mem[fb_flat(w)];
                 exp = pal_of(mag_of(row, c));
                 if (got !== exp) begin
                     if (errors < 12)
                         $display("FAIL line %0d col %0d (word %0d): expected %04h got %04h",
-                                 line, c, line*ROW_WORDS+c, exp, got);
+                                 line, c, w, exp, got);
                     errors = errors + 1;
                 end
             end
-            $display("line %0d verified (start col %0d)", line, (line*ROW_WORDS) % 512);
+            $display("line %0d verified (start row %0d col %0d)",
+                     line, (line*ROW_WORDS)/256, (line*ROW_WORDS) % 256);
         end
     endtask
 

@@ -83,15 +83,30 @@ module scan_out #(
     wire hb_rise = hb2 & ~hb3;
 
     // Effective line = (displayed + PREFETCH + waterfall base) mod NLINES.
-    // Each term < NLINES, so two conditional subtractions suffice to wrap.
-    // Registered (eff_line_r) to keep the wrap chain and the line*LINE_WORDS
-    // multiply on separate timing paths; px_line is stable across H-blank so the
-    // 1-cycle pipeline delay is harmless.
-    wire [11:0] esum  = {3'b0, ln2} + PREFETCH[11:0] + {3'b0, wf_base_row};
-    wire [11:0] ew1   = (esum >= 2*NLINES) ? (esum - 2*NLINES) : esum;
-    wire [11:0] ewrap = (ew1  >=   NLINES) ? (ew1  -   NLINES) : ew1;
+    // Each term < NLINES, so two conditional subtractions suffice to wrap. The add and
+    // each subtract are split across pipeline registers so neither the wrap chain nor the
+    // following line*LINE_WORDS multiply is on a long combinational path. px_line and
+    // wf_base_row are stable for hundreds of cycles before each H-blank, so the few-cycle
+    // pipeline delay is harmless. (When wf_base_row is a live signal — the waterfall path —
+    // the unpipelined chain was the 100 MHz critical path.)
+    wire  [11:0] esum  = {3'b0, ln2} + PREFETCH[11:0] + {3'b0, wf_base_row};
+    logic [11:0] esum_r;
+    always_ff @(posedge clk) esum_r <= esum;
+    wire  [11:0] ew1   = (esum_r >= 2*NLINES) ? (esum_r - 2*NLINES) : esum_r;
+    logic [11:0] ew1_r;
+    always_ff @(posedge clk) ew1_r <= ew1;
+    wire  [11:0] ewrap = (ew1_r >= NLINES) ? (ew1_r - NLINES) : ew1_r;
     logic [8:0] eff_line_r;
     always_ff @(posedge clk) eff_line_r <= ewrap[8:0];
+
+    // Cache slot is keyed to the DISPLAY line being prefetched (ln2 + PREFETCH), NOT the
+    // scrolled FB row eff_line. The LCD reads the cache by display line (slot = y[1:0]); with a
+    // non-zero waterfall base, eff_line[1:0] != display_line[1:0], so tagging by eff_line makes
+    // the LCD read the wrong slot — and on some frames the very slot scan_out is mid-filling,
+    // giving half-written lines. Pipelined to eff_line_r's depth so both are valid at hb_rise.
+    wire  [9:0] disp_line = {1'b0, ln2} + PREFETCH[9:0];
+    logic [1:0] dsl1, dsl2, dsl3;
+    always_ff @(posedge clk) begin dsl1 <= disp_line[1:0]; dsl2 <= dsl1; dsl3 <= dsl2; end
 
     always_ff @(posedge clk) begin
         if (rst) begin
@@ -110,7 +125,7 @@ module scan_out #(
                         cur_word   <= eff_line_r * LINE_WORDS[18:0] + FB_BASE_W[18:0];
                         words_left <= LINE_WORDS[10:0];
                         w_col_ctr  <= 10'd0;
-                        slot_r     <= eff_line_r[1:0];
+                        slot_r     <= dsl3;          // display-line slot, not eff_line[1:0]
                         st         <= S_REQ;
                     end
                 end
