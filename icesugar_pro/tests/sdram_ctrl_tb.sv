@@ -1,5 +1,6 @@
-// Testbench for sdram_ctrl.sv
-// Writes 8 words to bank 0 row 0 col 0, reads them back, verifies values.
+// Testbench for sdram_ctrl.sv: 8-word write/read at row 0, then a 512-word
+// (full-page) write/read at row 4. Drives DUT inputs non-blocking to avoid
+// racing the controller's sampling edge.
 
 `timescale 1ns/1ps
 
@@ -69,7 +70,7 @@ logic [12:0] active_row [0:3];
 // Write tracking
 logic [1:0]  wr_ba;
 logic [9:0]  wr_col;
-integer          wr_burst;
+int          wr_burst;
 logic        wr_active;
 
 // Read pipeline: CL=2 requires 3 stages (cmd at stage0, valid data at stage2 two cycles later)
@@ -77,12 +78,12 @@ logic        rdp_v [0:2];
 logic [1:0]  rdp_ba [0:2];
 logic [12:0] rdp_row [0:2];
 logic [9:0]  rdp_col [0:2];
-integer          rdp_cnt [0:2];
+int          rdp_cnt [0:2];
 
 wire [3:0] sdram_cmd = {sdram_cs_n, sdram_ras_n, sdram_cas_n, sdram_we_n};
 
 // Flat address helper
-function automatic integer flat_addr(input logic [1:0] ba, input logic [12:0] row, input integer col);
+function automatic int flat_addr(input logic [1:0] ba, input logic [12:0] row, input int col);
     flat_addr = (ba * 8192 + row) * 512 + col;
 endfunction
 
@@ -117,7 +118,6 @@ always @(posedge clk) begin
             wr_burst  <= 0;
             wr_active <= 1'b1;
         end
-        4'b0010: rdp_v[0] <= 1'b0; // PRECHARGE terminates read burst
         4'b0101: // READ handled below
             ;
         default: ;
@@ -187,7 +187,12 @@ localparam [15:0] PAT7 = 16'hC3C3;
 
 logic [15:0] wr_pattern [0:7];
 logic [15:0] rd_capture [0:7];
-integer rd_idx, errors;
+int rd_idx, errors;
+
+// Full-page burst scenario storage (512-word phase-A fetch)
+logic [15:0] wr2 [0:511];
+logic [15:0] rd2 [0:511];
+int rd2_idx;
 
 initial begin
     wr_pattern[0] = PAT0; wr_pattern[1] = PAT1;
@@ -196,13 +201,12 @@ initial begin
     wr_pattern[6] = PAT6; wr_pattern[7] = PAT7;
 
     errors    = 0;
-    rd_idx    = 0;
-    req_valid <= 0; req_wr <= 0; req_addr <= 0; req_len <= 0;
-    wr_data   <= 0; wr_valid <= 0;
+    req_valid = 0; req_wr = 0; req_addr = 0; req_len = 0;
+    wr_data   = 0; wr_valid = 0;
 
-    rst <= 1;
+    rst = 1;
     repeat(4) @(posedge clk);
-    rst <= 0;
+    rst = 0;
 
     $display("Waiting for SDRAM init...");
     wait(req_ready === 1'b1);
@@ -210,13 +214,17 @@ initial begin
     $display("Init done at time %0t ns", $time);
 
     // ---- WRITE ----
+    // Hold req_valid high until all data is fed (controller may be delayed by refresh cycles).
+    // DUT inputs are driven with non-blocking assignments so they settle in the NBA region,
+    // never racing the controller's posedge sampling (keeps iverilog and Verilator in agreement).
     req_valid <= 1'b1;
     req_wr    <= 1'b1;
     req_addr  <= 25'h000000;
     req_len   <= 10'd8;
 
     begin : wr_loop
-        integer wi = 0;
+        int wi;
+        wi = 0;
         while (wi < 8) begin
             @(posedge clk);
             if (wr_ready) begin
@@ -237,11 +245,13 @@ initial begin
     $display("Write done at %0t ns", $time);
 
     // ---- READ ----
+    // Hold req_valid high until accepted (controller handles any pending refreshes first)
     req_valid <= 1'b1;
     req_wr    <= 1'b0;
     req_addr  <= 25'h000000;
     req_len   <= 10'd8;
 
+    rd_idx = 0;
     begin : rd_loop
         while (rd_idx < 8) begin
             @(posedge clk);
@@ -258,12 +268,72 @@ initial begin
     $display("Read done at %0t ns", $time);
 
     // Verify
-    for (integer i = 0; i < 8; i++) begin
+    for (int i = 0; i < 8; i++) begin
         if (rd_capture[i] !== wr_pattern[i]) begin
             $display("FAIL word[%0d]: expected %04h got %04h", i, wr_pattern[i], rd_capture[i]);
             errors = errors + 1;
         end
     end
+
+    // ------------------------------------------------------------------
+    // Full-page burst: 512-word write/read at a fresh row. Exercises the
+    // 10-bit req_len / burst_cnt path that scan-out's phase-A fetch uses.
+    // ------------------------------------------------------------------
+    $display("Page-burst test: 512-word write/read at row 4...");
+    for (int i = 0; i < 512; i++)
+        wr2[i] = 16'((i * 16'h0193) + 16'h1357);
+
+    // ---- WRITE 512 ----
+    req_valid <= 1'b1;
+    req_wr    <= 1'b1;
+    req_addr  <= 25'h001000;   // bank 0, row 4, col 0
+    req_len   <= 10'd512;
+    begin : wr_loop2
+        int wi;
+        wi = 0;
+        while (wi < 512) begin
+            @(posedge clk);
+            if (wr_ready) begin
+                wr_data  <= wr2[wi];
+                wr_valid <= 1'b1;
+                wi = wi + 1;
+            end else begin
+                wr_valid <= 1'b0;
+            end
+        end
+        @(posedge clk);
+        wr_valid  <= 1'b0;
+        req_valid <= 1'b0;
+    end
+    wait(done === 1'b1);
+    @(posedge clk);
+
+    // ---- READ 512 ----
+    req_valid <= 1'b1;
+    req_wr    <= 1'b0;
+    req_addr  <= 25'h001000;
+    req_len   <= 10'd512;
+    rd2_idx = 0;
+    begin : rd_loop2
+        while (rd2_idx < 512) begin
+            @(posedge clk);
+            if (rd_valid) begin
+                rd2[rd2_idx] = rd_data;
+                rd2_idx = rd2_idx + 1;
+            end
+        end
+    end
+    wait(done === 1'b1);
+    req_valid <= 1'b0;
+    @(posedge clk);
+
+    for (int i = 0; i < 512; i++) begin
+        if (rd2[i] !== wr2[i]) begin
+            $display("FAIL page word[%0d]: expected %04h got %04h", i, wr2[i], rd2[i]);
+            errors = errors + 1;
+        end
+    end
+    $display("Page-burst test done at %0t ns", $time);
 
     if (errors == 0)
         $display("ALL TESTS PASSED");

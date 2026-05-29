@@ -1,11 +1,15 @@
-module sdram_ctrl (
+module sdram_ctrl #(
+    parameter int TREF_PERIOD = 780,  // refresh interval in clk cycles (7.8 us). 780 @100 MHz
+    parameter int RD_LAT      = 2     // read-capture latency (S_READ_CL count). 2 = TCAS.
+                                      // Bump by 1 if read data is captured through an extra register.
+) (
     input  logic        clk,
     input  logic        rst,
 
     input  logic        req_valid,
     input  logic        req_wr,
     input  logic [24:0] req_addr,
-    input  logic [9:0]  req_len,
+    input  logic [9:0]  req_len,   // burst length in 16-bit words, up to a full 512-word page
     output logic        req_ready,
 
     input  logic [15:0] wr_data,
@@ -42,10 +46,11 @@ localparam TRCD        = 2;
 localparam TCAS        = 2;
 localparam TRP         = 2;
 localparam TRFC        = 7;
-localparam TREF_PERIOD = 780;
 
-// Mode register: CL=2, BL=Full Page (512 cols), sequential, no write burst
-// A[2:0]=111, A[3]=0, A[6:4]=010, A[9:7]=000
+// Mode register: CL=2, BL=Full Page, sequential, no write burst
+// A[2:0]=111 (full page), A[3]=0 (sequential), A[6:4]=010 (CL=2), A[9:7]=000
+// Full-page bursts cannot use auto-precharge; each burst is closed by an
+// explicit PRECHARGE in S_PRECHARGE (close-row policy).
 localparam [12:0] MODE_REG = 13'b000_0_00_010_0_111;
 
 // {CS_n, RAS_n, CAS_n, WE_n}
@@ -86,7 +91,6 @@ logic [3:0]  cl_cnt;
 // Address decode from registered request address
 // 25-bit byte addr: [24:23]=bank, [22:10]=row(13b), [9:1]=col(9b), [0]=ignored
 wire [1:0]  ba_r  = req_addr_r[24:23];
-wire [12:0] row_r = req_addr_r[22:10];
 wire [9:0]  col_r = {1'b0, req_addr_r[9:1]};
 
 assign sdram_clk = clk;
@@ -98,7 +102,7 @@ always_ff @(posedge clk) begin
         timer       <= 15'(INIT_WAIT - 1);
         ref_cnt     <= 4'(INIT_REF);
         ref_timer   <= 11'(TREF_PERIOD - 1);
-        burst_cnt   <= 6'd0;
+        burst_cnt   <= 10'd0;
         req_len_r   <= 10'd0;
         req_wr_r    <= 1'b0;
         req_addr_r  <= 25'd0;
@@ -179,7 +183,7 @@ always_ff @(posedge clk) begin
                     {sdram_cs_n, sdram_ras_n, sdram_cas_n, sdram_we_n} <= CMD_AUTOREF;
                     timer <= 15'(TRFC - 1);
                     state <= S_REFRESH;
-                end else if (req_valid && req_ready) begin
+                end else if (req_valid) begin
                     req_ready  <= 1'b0;
                     req_wr_r   <= req_wr;
                     req_len_r  <= req_len;
@@ -202,18 +206,18 @@ always_ff @(posedge clk) begin
 
             S_RCD: begin
                 if (timer == 15'd0) begin
-                    burst_cnt <= 6'd0;
+                    burst_cnt <= 10'd0;
                     if (req_wr_r) begin
                         {sdram_cs_n, sdram_ras_n, sdram_cas_n, sdram_we_n} <= CMD_WRITE;
                         sdram_ba <= ba_r;
-                        sdram_a  <= {3'b010, col_r}; // A10=0, manual precharge
+                        sdram_a  <= {3'b000, col_r}; // A10=0: no auto-precharge (closed explicitly in S_PRECHARGE)
                         state    <= S_WRITE_DATA;
                         wr_ready <= 1'b1;
                     end else begin
                         {sdram_cs_n, sdram_ras_n, sdram_cas_n, sdram_we_n} <= CMD_READ;
                         sdram_ba <= ba_r;
-                        sdram_a  <= {3'b010, col_r}; // A10=0, manual precharge
-                        cl_cnt   <= 4'(TCAS);     // registered pins add 1 cycle; total latency = TCAS+1 cycles
+                        sdram_a  <= {3'b000, col_r}; // A10=0: no auto-precharge (closed explicitly in S_PRECHARGE)
+                        cl_cnt   <= 4'(RD_LAT);   // read-capture latency (TCAS, +1 if captured through an extra reg)
                         state    <= S_READ_CL;
                     end
                 end else begin
@@ -226,10 +230,10 @@ always_ff @(posedge clk) begin
                 if (wr_valid) begin
                     sdram_dq_out <= wr_data;
                     sdram_dq_oe  <= 1'b1;
-                    burst_cnt    <= burst_cnt + 6'd1;
-                    if (burst_cnt == req_len_r - 6'd1) begin
+                    burst_cnt    <= burst_cnt + 10'd1;
+                    if (burst_cnt == req_len_r - 10'd1) begin
                         wr_ready <= 1'b0;
-                        timer    <= 15'(TRP + 1);
+                        timer    <= 15'(TRP + 2); // +1 over read path defers PRECHARGE one cycle for tWR
                         state    <= S_PRECHARGE;
                     end
                 end
@@ -237,7 +241,7 @@ always_ff @(posedge clk) begin
 
             S_READ_CL: begin
                 if (cl_cnt == 4'd0) begin
-                    burst_cnt <= 6'd0;
+                    burst_cnt <= 10'd0;
                     state     <= S_READ_DATA;
                 end else begin
                     cl_cnt <= cl_cnt - 4'd1;
@@ -247,20 +251,24 @@ always_ff @(posedge clk) begin
             S_READ_DATA: begin
                 rd_data   <= sdram_dq_in;
                 rd_valid  <= 1'b1;
-                burst_cnt <= burst_cnt + 6'd1;
-                if (burst_cnt == req_len_r - 6'd1) begin
+                burst_cnt <= burst_cnt + 10'd1;
+                if (burst_cnt == req_len_r - 10'd1) begin
+                    // keep rd_valid asserted for this final beat; it drops via the
+                    // per-cycle default once we leave S_READ_DATA
                     timer    <= 15'(TRP + 1);
                     state    <= S_PRECHARGE;
                 end
             end
 
             S_PRECHARGE: begin
+                // Close the active row. Reads enter with timer=TRP+1 so PRECHARGE
+                // fires immediately; writes enter with timer=TRP+2 so it is deferred
+                // one extra cycle to satisfy tWR (write recovery).
                 if (timer == 15'(TRP + 1)) begin
                     {sdram_cs_n, sdram_ras_n, sdram_cas_n, sdram_we_n} <= CMD_PRECHARGE;
-                    sdram_ba <= ba_r;
-                    sdram_a  <= 13'b0010000000000; // A10=1, precharge all banks
-                    timer    <= timer - 15'd1;
-                end else if (timer == 15'd0) begin
+                    sdram_a <= 13'b0010000000000; // A10=1: precharge all banks
+                end
+                if (timer == 15'd0) begin
                     done  <= 1'b1;
                     state <= S_DONE;
                 end else begin

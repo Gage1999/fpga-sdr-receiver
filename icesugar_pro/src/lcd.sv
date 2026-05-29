@@ -21,6 +21,15 @@ module lcd (
 
 logic [10:0] x;
 logic [9:0] y;
+logic scan_de;
+
+scan_timing u_scan (
+    .pclk (pclk),
+    .rst (rst),
+    .x (x),
+    .y (y),
+    .de (scan_de)
+);
 
 localparam MODE_FM = 3'd0;
 localparam MODE_ADSB = 3'd1;
@@ -64,21 +73,6 @@ function automatic logic [7:0] sps_char_at(
         endcase
     end
 endfunction
-
-// Timing
-always_ff @(posedge pclk) begin
-    if (rst) begin
-        x <= 11'd0;
-        y <= 10'd0;
-    end else begin
-        if (x < 11'd927) begin
-            x <= x + 11'd1;
-        end else begin
-            x <= 11'd0;
-            y <= (y < 10'd524) ? y + 10'd1 : 10'd0;
-        end
-    end
-end
 
 // Waterfall lookup
 logic [7:0] bin_req;
@@ -169,7 +163,7 @@ always_comb begin
 end
 
 always_comb begin
-    if (!rst && x < 11'd800 && y < 10'd480) begin
+    if (scan_de) begin
         LCD_DE = 1'b1;
         if (prev_in_wf) begin
             pixel_color = wf_color;
