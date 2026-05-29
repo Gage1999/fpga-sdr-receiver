@@ -1,5 +1,5 @@
 
-.PHONY: all prog sim sim_i2s sim_fm sim_lcd sim_fft sim_sdram sim_sdram_bl sim_line_cache sim_scan_out sim_arb sim_compositor sim_integration sim_sdram_test sim_sdram_color prog_sdram_test prog_sdram_color prog_sdram_color75 prog_sdram_color_ci prog_sdram_cal prog_sdram_cal_guard prog_sdram_cal_bl8 prog_sdram_cal_75 prog_lcd_test prog_spi_rx_test prog_i2s_tone_test prog_full_audio_tone prog_fm_chain_test prog_fm_spi12 prog_fm_spi8 prog_fm_spi8_paced clean
+.PHONY: all prog sim sim_i2s sim_fm sim_lcd sim_fft sim_sdram sim_sdram_bl sim_line_cache sim_scan_out sim_arb sim_compositor sim_integration sim_sdram_test sim_sdram_color prog_sdram_test prog_sdram_color prog_sdram_color75 prog_sdram_color_ci prog_sdram_cal prog_sdram_cal_guard prog_sdram_cal_bl8 prog_sdram_cal_75 prog_lcd_test prog_spi_rx_test prog_link_test prog_i2s_tone_test prog_full_audio_tone prog_fm_chain_test prog_fm_spi12 prog_fm_spi8 prog_fm_spi8_paced clean
 
 SV_SRCS = src/top.sv \
           src/spi_cmd_slave.sv \
@@ -54,6 +54,19 @@ build/spi_rx_test.bit: tests/spi_rx_lcd_test_top.sv src/spi_iq_slave.sv $(LPF) |
 	ecppack build/spi_rx_test.cfg $@
 
 prog_spi_rx_test: build/spi_rx_test.bit
+	icesprog $<
+
+# Quantitative link / signal-integrity test. Pluto sends an incrementing 32-bit
+# counter (icesugar_stream --mode link-test); this build checks each received
+# word is prev+1 and shows PASS/FAIL + error/total counts on the LCD.
+# Green = 0 errors, red = errors (latched), blue = no data. Wiggle the wires and
+# watch err_count to measure the link's word-error-rate.
+build/link_test.bit: tests/link_test_top.sv src/spi_iq_slave.sv src/async_fifo.sv $(LPF) | build
+	yosys -p "synth_ecp5 -top link_test_top -json build/link_test.json" tests/link_test_top.sv src/spi_iq_slave.sv src/async_fifo.sv
+	nextpnr-ecp5 $(DEVICE) --json build/link_test.json --textcfg build/link_test.cfg --lpf $(LPF) --freq 25
+	ecppack build/link_test.cfg $@
+
+prog_link_test: build/link_test.bit
 	icesprog $<
 
 build/i2s_tone_test.bit: tests/i2s_tone_test_top.sv src/i2s_tx.sv $(LPF) | build

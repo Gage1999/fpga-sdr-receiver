@@ -49,6 +49,7 @@ enum stream_mode {
     MODE_FM = 0,
     MODE_SYNTH_FM,
     MODE_SYNTH_TONE,
+    MODE_LINK_TEST,
 };
 
 struct stream_cfg {
@@ -123,6 +124,14 @@ static void spi_send_iq(int16_t i_val, int16_t q_val)
 {
     uint32_t word = (((uint32_t)(uint16_t)i_val) << 16) | (uint16_t)q_val;
 
+    spi_send_byte((word >> 24) & 0xff);
+    spi_send_byte((word >> 16) & 0xff);
+    spi_send_byte((word >>  8) & 0xff);
+    spi_send_byte(word & 0xff);
+}
+
+static void spi_send_word32(uint32_t word)
+{
     spi_send_byte((word >> 24) & 0xff);
     spi_send_byte((word >> 16) & 0xff);
     spi_send_byte((word >>  8) & 0xff);
@@ -509,12 +518,71 @@ static int stream_synth_tone(const struct stream_cfg *cfg)
     return 0;
 }
 
+/*
+ * Signal-integrity / link test: stream an incrementing 32-bit counter over the
+ * same JP5 SPI path the IQ stream uses, framed identically (CS per chunk, or
+ * per word with --per-word-cs). The iCESugar link_test_top bitstream checks each
+ * received word is prev+1 and counts errors. Compare error counts before/after
+ * SI changes (slew/drive, grounding, series R) or while flexing the wires.
+ */
+static int stream_link_test(const struct stream_cfg *cfg)
+{
+    uint32_t counter = 0;
+    unsigned long long total = 0;
+    struct timeval t0, t1;
+
+    gettimeofday(&t0, NULL);
+
+    printf("Link test: incrementing 32-bit counter, chunk=%u, per_word_cs=%d\n",
+           cfg->chunk_samples, cfg->per_word_cs);
+
+    while (keep_running) {
+        unsigned chunk = cfg->chunk_samples;
+        struct timeval now;
+
+        if (cfg->duration_sec) {
+            gettimeofday(&now, NULL);
+            if ((unsigned)(now.tv_sec - t0.tv_sec) >= cfg->duration_sec)
+                break;
+        }
+
+        if (!cfg->dry_run && !cfg->per_word_cs)
+            spi_select();
+
+        for (unsigned n = 0; n < chunk; n++) {
+            if (!cfg->dry_run && cfg->per_word_cs)
+                spi_select();
+            if (!cfg->dry_run)
+                spi_send_word32(counter);
+            if (!cfg->dry_run && cfg->per_word_cs)
+                spi_deselect();
+            if (cfg->word_delay_us)
+                usleep(cfg->word_delay_us);
+            counter++;
+            total++;
+        }
+
+        if (!cfg->dry_run && !cfg->per_word_cs)
+            spi_deselect();
+    }
+
+    gettimeofday(&t1, NULL);
+    double elapsed = (double)(t1.tv_sec - t0.tv_sec) +
+                     (double)(t1.tv_usec - t0.tv_usec) / 1000000.0;
+    double rate = elapsed > 0.0 ? (double)total / elapsed : 0.0;
+
+    printf("Link test sent %llu words in %.3f s (%.0f words/s)\n",
+           total, elapsed, rate);
+    return 0;
+}
+
 static void usage(const char *prog)
 {
     printf("Usage: %s [options]\n", prog);
     printf("  --mode fm              Stream FM IQ (default)\n");
     printf("  --mode synth-fm        Stream generated FM IQ over the same SPI path\n");
     printf("  --mode synth-tone      Stream a strong generated IQ tone\n");
+    printf("  --mode link-test       Stream an incrementing 32-bit counter (SI/link test)\n");
     printf("  --freq-mhz FREQ        RF frequency in MHz (default 95.1)\n");
     printf("  --adc-rate HZ          AD9361 sample rate; 0 tries fallbacks (default 0)\n");
     printf("  --rate HZ              Output IQ rate to FPGA; 0 uses ADC rate (default 1000000)\n");
@@ -560,6 +628,8 @@ static int parse_args(int argc, char **argv, struct stream_cfg *cfg)
                 cfg->mode = MODE_SYNTH_FM;
             else if (strcmp(argv[i], "synth-tone") == 0)
                 cfg->mode = MODE_SYNTH_TONE;
+            else if (strcmp(argv[i], "link-test") == 0)
+                cfg->mode = MODE_LINK_TEST;
             else {
                 fprintf(stderr, "unsupported mode: %s\n", argv[i]);
                 return -1;
@@ -638,7 +708,8 @@ int main(int argc, char **argv)
     if (cfg.mode == MODE_FM) {
         if (configure_fm(&cfg, &actual_rate) != 0)
             return 1;
-    } else if (cfg.mode == MODE_SYNTH_FM || cfg.mode == MODE_SYNTH_TONE) {
+    } else if (cfg.mode == MODE_SYNTH_FM || cfg.mode == MODE_SYNTH_TONE ||
+               cfg.mode == MODE_LINK_TEST) {
         actual_rate = cfg.sample_rate ? cfg.sample_rate : 1000000;
         printf("Synthetic source: output_rate=%u Hz\n", actual_rate);
     } else {
@@ -667,6 +738,8 @@ int main(int argc, char **argv)
         ret = stream_synth_fm(&cfg) == 0 ? 0 : 1;
     } else if (cfg.mode == MODE_SYNTH_TONE) {
         ret = stream_synth_tone(&cfg) == 0 ? 0 : 1;
+    } else if (cfg.mode == MODE_LINK_TEST) {
+        ret = stream_link_test(&cfg) == 0 ? 0 : 1;
     } else {
         iq = open_iio_readdev(&cfg, actual_rate);
         if (!iq) {

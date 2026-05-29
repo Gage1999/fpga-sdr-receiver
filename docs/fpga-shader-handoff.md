@@ -1,6 +1,6 @@
 # Pixel shader / FPGA integration — handoff
 
-**Last updated:** 2026-05-29 (post SDRAM-stack merge, PR #4)
+**Last updated:** 2026-05-29
 
 Snapshot of where the FPGA-side renderer work stands, what's done, and
 what's next. Companion to `fpga-sdr-receiver-architecture.md` (the
@@ -19,9 +19,9 @@ describes *how far in we are*.
 | Existing FM bitstream (`top.sv`) | Builds clean (re-verified with oss-cad-suite). DP16KD 49/56 (87.5%) · LUT 3714/24288 (15%) · FF 2392 (9%) · IO 28/197 (14%). All clocks PASS. |
 | FPGA toolchain | **Installed** at `~/oss-cad-suite` (release 2026-05-28): yosys 0.65, nextpnr-ecp5 0.10, ecppack 1.4. Verilator 5.020 via apt. |
 | `scan_timing.sv` extracted from `lcd.sv` | Done. Same bitstream output, +73 LUTs (module-boundary overhead). |
-| SDRAM stack (`sdram_ctrl`, `sdram_arb`, `scan_out`, `line_cache`, `compositor`) | **Landed** (PR #4, `f52c78b`). All 7 `make sim_integration` tbs pass. `top_sdram_wf` proves the full read/write/CDC chain at **5/56 DP16KD**. Compositor = waterfall_step only. See "SDRAM stack landed" below. |
-| Shader ↔ SDRAM integration | **Not wired.** `top_sdram_wf` sends raw FB → LCD; `pixel_shader_top` is in nothing but its parity harness. This is gap #18. |
+| Partner's `sdram_ctrl.sv` | **Done & hardware-proven** (write/read round-trip + colour-bar display on a real iCESugar-Pro, 100 MHz). The *open issues* below are resolved (`req_len` now 10-bit; `req_ready` handshake fixed). |
 | Pico firmware (`pico2w/`) | Skeleton only. `ui_logic.c` validated, but touch/SPI HAL and main loop are stubs. |
+| SDRAM-side gateware (arbiter, scan-out, compositor) | **Built, sim-verified, merged (PR #4).** Half-page framebuffer layout (see arch §4/§6). Read/display path **hardware-proven**; one open item: live-waterfall striping (write-while-scan timing, sim-clean). |
 
 ---
 
@@ -102,123 +102,121 @@ EBR — EBR read is synchronous — so yosys maps them to logic/distributed RAM:
 | `spectrum_bin_ram` | `TRELLIS_DPR16X4` distributed LUTRAM ✓ | **1** DP16KD |
 | **shader total** | **0 DP16KD**, ~2.6k LUT4, 32 DPR16X4, 3 DSP, ~0 FF | **19 DP16KD** |
 
-**Decision: use the sync-read EBR form** (see Decisions above). With the
-waterfall now in SDRAM (measured: `top_sdram_wf` = 5/56), there's ample EBR,
-so the shader ROMs map to BRAM rather than the async-LUT dodge. The async
-form's apparent 0-DP16KD cost was also misleading — `sprite_rom` folds cheaply
-only because most of the 16 sprite slots are still blank; the sync-read form
-(15 DP16KD) is flat regardless of contents.
+**Projected integrated budget** (baseline − waterfall + shader, sync-EBR form):
 
-**Projected integrated budget** for the new SDRAM top (#18):
+`49 − 45 (waterfall→SDRAM) + 19 (shader) ≈ 23 / 56 DP16KD (41%)` — comfortably
+within budget, ~33 blocks free. LUT/FF/DSP all well under 50%. **Within budget.**
 
-| Block | DP16KD |
-|---|---:|
-| FFT ping-pong buffers | 4 |
-| line_cache (4×1024×16) | 4 |
-| shader ROMs (sprite 15 + font16 3 + spectrum 1) | 19 |
-| waterfall staging / misc | ~1 |
-| **projected total** | **~28 / 56 (50%)** |
-
-Comfortably within budget, ~28 blocks free — versus the 87.5% the BRAM-waterfall
-`top.sv` was pinned at. LUT/FF/DSP all well under 50%.
+Note the `sprite_rom` async form folds cheaply *only because* most of the 16
+sprite slots are still blank; fill them in and the async-LUT cost grows. The
+sync-read EBR form (15 DP16KD) is flat regardless of contents — so #18 should
+register the ROM reads (arch §9 "1-cycle ROM-lookup pipeline"), which both fixes
+this and meets pixel-clock timing. `spectrum_bin_ram` already verified to map to
+distributed LUTRAM (`TRELLIS_DPR16X4`), as arch §5/§9 assumed.
 
 ---
-
-## SDRAM stack landed (PR #4, `f52c78b`)
-
-Partner's drop went well past the controller and collapsed most of the
-P3/P4 SDRAM tasks. All 7 integration sims pass (`make sim_integration`):
-
-- **`sdram_ctrl.sv`** — controller. `req_len` widened to 10-bit (full
-  512-word page); `BURST_MODE` (full-page vs BL=8) and `RD_LAT`
-  parameterized. `req_ready` held low during the ~200 µs init so clients
-  can't issue early (init-gating issue resolved). Closes-row policy.
-- **`sdram_arb.sv`** (was #14) — 3-client fixed priority (0=scan_out >
-  1=compositor > 2=ingest), no preemption, read-data broadcast with
-  per-lane `rd_valid`. Matches arch §3. ✅
-- **`scan_out.sv` + `line_cache.sv`** (was #15) — page-aligned segment
-  splitting, waterfall base-row modulo, CDC line cache (4×1024×16 =
-  4 EBR, registered read). ✅
-- **`compositor.sv`** (part of #16) — `waterfall_step` only: mag row →
-  RGB565 → page-split burst write + base-row bump. `TEST_PATTERN` mode.
-  `goes_row_write` / `adsb_frame` not built; `region_clear` exists only
-  as an inline startup-clear FSM in `top_sdram_wf`. ⚠️ partial
-- **`top_sdram_wf/color/cal.sv`** — bring-up tops proving the full
-  read/write/CDC chain. `top_sdram_wf` measures **5/56 DP16KD** (vs
-  49/56 for the BRAM-waterfall `top.sv`) — the framebuffer→SDRAM
-  migration reclaims ~44 blocks as designed.
-
-**Known design note:** the tops run `MAX_BURST=256` + `HALF_PAGE=1`
-(256 words/SDRAM row) to dodge the marginal 512-column page-boundary
-case. `scan_out` and `compositor` **must share the same `HALF_PAGE`**
-or their addressing diverges. Uses 2× SDRAM rows — irrelevant at 32 MB.
-
-## Decisions (2026-05-29)
-
-- **Shader ROMs map to BRAM** (sync-read EBR form, ~19 DP16KD: sprite 15,
-  font16 3, spectrum 1). The async-LUT form was only a BRAM-saving dodge;
-  with the waterfall now in SDRAM there's ample EBR, so use it. **This
-  means #18 registers the ROM reads** (arch §9 "1-cycle ROM-lookup
-  pipeline") — which also fixes pixel-clock timing. The combinational
-  parity harness must grow a pipeline-aware mode, or keep the
-  combinational core for parity and wrap a registered-read version for
-  synthesis.
-- **Integration targets a new SDRAM top**, NOT `top.sv`. The FM
-  BRAM-waterfall bitstream is left as-is; the shipping renderer is a new
-  top descended from `top_sdram_wf`.
 
 ## What's next
 
-### Done
-P1 (parity harness, scan_timing, image-mode buttons) · P2 ROMs (#7, #11) ·
-SDRAM stack (#14, #15, #16-waterfall) — all complete.
+Prioritized list. Anything in P1/P2/P3 is independent of the SDRAM
+controller working — they can be done while partner iterates on
+`sdram_ctrl.sv`. P4 needs at least the mock SDRAM stack (#13–#15).
 
-### #12 — UI state shadow SV (next; unblocked)
-1KB double-buffered EBR per arch doc §8. Pico SPI writes back buffer;
-shader reads front buffer; flip at V-sync. Needs an opcode parser
-front-end for `OP_FULL_STATE` / `OP_PARTIAL_STATE`. Output ports mirror
-the `shader_state_t` fields `pixel_shader.sv` already consumes. This is
-the source of the shader's prepared inputs — without it the shader has
-nothing to render, so it gates #18.
+### P1 — Foundational, SDRAM-independent
+All complete. ✅
 
-### #18 — Integrate the shader into a new SDRAM top (the headline gap)
-Today `top_sdram_wf` sends the raw framebuffer pixel straight to the LCD
-(`px_data → LCD_R/G/B`); `pixel_shader_top` is in nothing but its parity
-harness. Build a new top that wires:
-`scan_timing → (x,y)` · `line_cache.r_data → fb_under` · UI shadow front
-buffer → shader prepared inputs · `pixel_shader_top → LCD pins`.
-Two integration details to get right:
-- `line_cache` read is registered (1-cycle); reconcile against `(x,y)`
-  via the read-one-line-ahead scheme so pixel and FB byte align.
-- ROM reads become registered (per the decision above) — pipeline the
-  shader by a cycle, absorbed by the line cache.
-(blocked by #12)
+### P2 — Build out the shader integration surface
+- **#7 `sprite_rom.sv` + .mem generation** — ✅ **Done.** Flat async ROM,
+  16384×16, mirrors `font8x16_rom.sv`. Sync-read EBR form measured at 15
+  DP16KD (full 16 sprites).
+- **#11 `font_16x32_rom.sv` + .mem** — ✅ **Done.** Flat async ROM, 3072×16,
+  `(* ram_style = "logic" *)`. Sync-read EBR form = 3 DP16KD.
+- **#12 UI state shadow SV** — 1KB double-buffered EBR per arch doc §8.
+  Pico SPI writes back buffer; shader reads front buffer; flip at V-sync.
+  Needs an opcode parser front-end for `OP_FULL_STATE` /
+  `OP_PARTIAL_STATE`. Output ports mirror the `shader_state_t` fields
+  `pixel_shader.sv` already expects.
 
-### Remaining compositor / ingest work
-- **#16 remainder** — `goes_row_write`, `adsb_frame`, and a reusable
-  `region_clear` op. Only the image modes need these; lower priority.
-- **#17 Ingest writer** — wire the existing `spi_iq_slave` / `async_fifo`
-  IQ stream into the compositor (replacing `top_sdram_wf`'s synthetic
-  generator). Plus ADS-B basemap one-shot load via a new Pico wire opcode.
+### P3 — Mock-SDRAM stack (sim only, no partner dependency)
+
+> **Update (2026-05-29):** P3/P4 #14–#16 are **built and merged** (on the real controller, not just
+> a mock), under slightly different names: **#14 = `sdram_arb.sv`**, **#15 = `scan_out.sv` +
+> `line_cache.sv`**, **#16 = `compositor.sv`** (`waterfall_step`). Each has a passing testbench, and
+> `top_sdram_wf.sv` wires the whole chain (generator → `async_fifo` CDC → compositor → arb → ctrl;
+> scan_out → line_cache → LCD). Read/display path is hardware-proven. **Still open: #18** (fold into
+> the real `top.sv` with `pixel_shader`) and the live-waterfall striping. A standalone `mock_sdram.sv`
+> (#13) was not needed — the behavioral SDRAM model lives in the testbenches.
+
+- **#13 `mock_sdram.sv`** — implements partner's interface
+  (`req_valid/ready/wr/addr/len`, `wr_data/valid/ready`, `rd_data/valid`,
+  `done`) backed by a flat reg array or BRAM. Lets us develop and test
+  scan-out / arbiter / compositor without real hardware.
+- **#14 `sdram_arbiter.sv`** — 3-client fixed priority (scan-out >
+  compositor > ingest). Sits between clients and the single-port
+  controller. Per arch doc §3. (blocked by #13)
+- **#15 `scan_out_reader.sv` + 4-deep line cache** — per arch doc §4. At
+  H-blank of line N, kick burst read for line N+2 into a free cache slot.
+  CDC point: true-dual-port EBR, write 100 MHz / read 30 MHz. (blocked
+  by #14)
+
+### P4 — Needs working SDRAM stack
+- **#16 Compositor write-side FSMs** — `waterfall_step`,
+  `goes_row_write`, `region_clear`, `adsb_frame`. Each drives the
+  arbiter's compositor port. Validate against `fb_compositor.c` via a
+  parity harness analogous to the shader one. (blocked by #14)
+- **#17 Ingest writer** — drains existing `spi_iq_slave` / `async_fifo`
+  IQ stream into target SDRAM regions. Also handles ADS-B basemap
+  one-shot load via a new wire opcode from Pico. (blocked by #14)
+- **#18 Integrate: replace `u_lcd` in `top.sv`** — wire scan_timing +
+  scan_out_reader + line cache + pixel_shader + LCD pin driver,
+  replacing current `u_lcd`. First end-to-end bitstream of the new
+  architecture. (blocked by #7, #9, #10, #11, #12, #15, #16 — i.e.
+  everything above except the SDRAM controller itself)
 
 ---
 
-## SDRAM controller open issues — status after PR #4
+## Open issues with partner's SDRAM controller (`b0b1aa2`)
 
-The earlier interface concerns, reconciled against the landed code:
+> **Status (2026-05-29): mostly resolved during SDRAM bring-up + integration.**
+> - **#1 Single-client** — confirmed intended; the arbiter (`sdram_arb.sv`, 3-client fixed
+>   priority) is built on the gateware side. ✅
+> - **#2 `req_len` 6-bit** — widened to **10 bits**; a full 800-word line works. ✅
+> - **#3 init-done** — `req_ready` is now **combinational** (high only in IDLE when ready, low
+>   during init/refresh), so it's a reliable "ready" signal; a dedicated `ready_after_init` wasn't
+>   added but isn't needed. ✅
+> - **#4 diagnostics** — bring-up diagnostics provided via a separate `top_sdram_cal` (error-count
+>   bars on the LCD) and `BURST_MODE`/`RD_GUARD`/`WR_GUARD` knobs; no in-controller status port. ◐
+> - **#5 BL in MODE_REG** — `req_len` is in **16-bit words** (default BL=Full-Page; optional BL=8
+>   via `BURST_MODE`), not restricted to BL groups. ✅
+> - **#6 config flash** — unchanged; ADS-B basemap still loads from the Pico, as planned. —
+>
+> Also note: the framebuffer is now **half-page** (256 words/SDRAM row) due to a hardware
+> page-boundary margin — see arch doc §4/§6. Scan-out and the compositor must share that mapping.
 
-1. **Single-client interface** — confirmed intended; `sdram_arb.sv`
-   provides the per-client queues on top. ✅ resolved
-2. **`req_len` too narrow** — now 10-bit (full 512-word page). ✅ resolved
-3. **No explicit init-done** — `req_ready` held low through the ~200 µs
-   init, high in `S_IDLE`; functionally gates clients. No dedicated
-   `init_done` output, but the arbiter just waits on `req_ready`, so a
-   client's first request blocks until init completes. ✅ acceptable
-4. **No status/diagnostic ports** — `sdram_arb` exposes `gnt_valid`/`gnt`;
-   controller still only exposes `done`. ⚠️ minor, add if HW bring-up needs it
-5. **BL=8 vs words** — `BURST_MODE` param; `req_len` is in 16-bit words. ✅ resolved
-6. **Config flash / basemap load** — still open; ADS-B basemap loads from
-   Pico (extended wire protocol), part of #17. ⏳ deferred
+Original list (for context):
+
+Worth discussing before #14 / #15 are written against the interface:
+
+1. **Single-client interface.** Controller has one `req_valid/ready`
+   pair, not per-client queues. Means the arbiter (#14) is now clearly
+   *our* work, not the controller's. Confirm that's intended.
+2. **`req_len` is 6-bit (max 63).** A full 800-pixel scan-out line is
+   800 16-bit words. Either widen `req_len` to ≥10 bits, or have
+   clients chunk into multiple back-to-back requests (slower due to
+   per-burst RAS/CAS overhead).
+3. **No explicit init-done signal.** `req_ready` presumably stays low
+   during the 200 µs `S_INIT_*` states then goes high in `S_IDLE`;
+   would be cleaner to expose as a dedicated `ready_after_init` output.
+4. **No status/diagnostic ports** beyond `done`. For hardware bring-up,
+   a current-state output and a refresh-count register would help.
+5. **BL=8 in MODE_REG.** Confirm `req_len` is in 16-bit words (not BL=8
+   groups) so requests aren't restricted to multiples of 8.
+6. **Lattice config flash sharing.** No SPI flash master included.
+   Per the discussion in this session: ADS-B basemap will load from
+   Pico (extended wire protocol) rather than direct flash access.
+
+These don't block #13 (mock SDRAM) — we can implement the mock against
+the *intended* contract while these are sorted out.
 
 ---
 
