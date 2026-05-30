@@ -17,6 +17,7 @@ SV_SRCS = src/top.sv \
           src/waterfall_buf.sv \
           src/cic_decimate.sv \
           src/fm_demod.sv \
+          src/audio_fifo.sv \
           src/i2s_tx.sv \
           src/color_lut.sv \
           src/font8x16_rom.sv \

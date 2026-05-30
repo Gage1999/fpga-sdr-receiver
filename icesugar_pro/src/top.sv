@@ -7,6 +7,11 @@ module top #(
     parameter IQ_FIFO_DEPTH = 16,
     parameter USE_TLV = 0,           // 0 = raw-IQ link (default), 1 = TLV-framed link
     parameter BYTE_FIFO_DEPTH = 32,  // TLV byte CDC FIFO depth (spi_clk -> CLK)
+    parameter I2S_BCLK_DIV = 9,      // I2S sample rate = 25M/(BCLK_DIV*64); 9 -> ~43.4kHz.
+                                     // Matched to the measured demod rate: the Pluto delivers
+                                     // ~352k samples/s, so at FM_CIC_R=8 the demod runs at
+                                     // ~44.0kHz -> 43.4kHz is a ~1.4% match, well within the
+                                     // elastic audio FIFO's skip/repeat range.
     parameter CLK_HZ = 25_000_000
 )(
     input logic CLK,
@@ -736,9 +741,59 @@ always_ff @(posedge CLK or posedge sys_rst) begin
     end
 end
 
-assign audio_to_i2s = AUDIO_TEST_TONE ? tone_sample : audio_sample_16;
+// ---- Elastic audio FIFO: decouple the bursty fm_demod output rate from the
+// fixed I2S playback rate, with skip/repeat rate adaptation (audio_fifo.sv).
+// Without it the DAC under/over-samples the demod stream -> distortion. ----
+localparam int AFIFO_DEPTH = 1024;
+localparam int AFIFO_LOW   = AFIFO_DEPTH/4;       // below -> repeat (hold) to refill
+localparam int AFIFO_HIGH  = (AFIFO_DEPTH*3)/4;   // above -> skip one to catch up
 
-i2s_tx u_i2s (
+logic [15:0] afifo_rdata;
+logic        afifo_empty, afifo_full;
+logic [$clog2(AFIFO_DEPTH):0] afifo_count;
+logic [1:0]  afifo_pop_n;
+logic [15:0] audio_held;
+logic        i2s_sample_req_d;
+wire         sample_req_edge = i2s_sample_req & ~i2s_sample_req_d;
+
+audio_fifo #(.WIDTH(16), .DEPTH(AFIFO_DEPTH)) u_afifo (
+    .clk    (CLK),
+    .rst    (sys_rst),
+    .wdata  (audio_sample_16),
+    .wpush  (audio_valid & fm_active & ~afifo_full),
+    .full   (afifo_full),
+    .rdata  (afifo_rdata),
+    .rpop_n (afifo_pop_n),
+    .empty  (afifo_empty),
+    .count  (afifo_count)
+);
+
+always_ff @(posedge CLK or posedge sys_rst) begin
+    if (sys_rst) i2s_sample_req_d <= 1'b0;
+    else         i2s_sample_req_d <= i2s_sample_req;
+end
+
+// One sample consumed per I2S frame; advance 0/1/2 to keep the buffer centered.
+always_comb begin
+    afifo_pop_n = 2'd0;
+    if (sample_req_edge) begin
+        if      (afifo_count <= AFIFO_LOW)  afifo_pop_n = 2'd0;  // low -> repeat
+        else if (afifo_count >= AFIFO_HIGH) afifo_pop_n = 2'd2;  // high -> skip one
+        else                                afifo_pop_n = 2'd1;  // normal
+    end
+end
+
+// Hold the last valid sample so a brief underrun repeats it cleanly.
+always_ff @(posedge CLK or posedge sys_rst) begin
+    if (sys_rst)           audio_held <= '0;
+    else if (~afifo_empty) audio_held <= afifo_rdata;
+end
+
+wire signed [15:0] audio_play = afifo_empty ? audio_held : afifo_rdata;
+
+assign audio_to_i2s = AUDIO_TEST_TONE ? tone_sample : audio_play;
+
+i2s_tx #(.BCLK_DIV(I2S_BCLK_DIV)) u_i2s (
     .clk (CLK),
     .rst (sys_rst),
     .left_in (audio_to_i2s),
