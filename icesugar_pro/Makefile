@@ -1,11 +1,15 @@
 
-.PHONY: all prog sim sim_i2s sim_fm sim_lcd sim_fft sim_sdram sim_sdram_bl sim_line_cache sim_scan_out sim_arb sim_compositor sim_integration sim_sdram_test sim_sdram_color prog_sdram_test prog_sdram_color prog_sdram_color75 prog_sdram_color_ci prog_sdram_cal prog_sdram_cal_guard prog_sdram_cal_bl8 prog_sdram_cal_75 prog_lcd_test prog_spi_rx_test prog_link_test prog_i2s_tone_test prog_full_audio_tone prog_fm_chain_test prog_fm_spi12 prog_fm_spi8 prog_fm_spi8_paced clean
+.PHONY: all prog prog_tlv prog_tlv_spi8 sim sim_i2s sim_fm sim_lcd sim_fft sim_sdram sim_sdram_bl sim_line_cache sim_scan_out sim_arb sim_compositor sim_integration sim_sdram_test sim_sdram_color prog_sdram_test prog_sdram_color prog_sdram_color75 prog_sdram_color_ci prog_sdram_cal prog_sdram_cal_guard prog_sdram_cal_bl8 prog_sdram_cal_75 prog_lcd_test prog_spi_rx_test prog_tlv_link_test sim_spi_frame_rx sim_tlv_demux sim_tlv sim_tlv_all prog_i2s_tone_test prog_full_audio_tone prog_fm_chain_test prog_fm_spi12 prog_fm_spi8 prog_fm_spi8_paced clean
 
 SV_SRCS = src/top.sv \
           src/spi_cmd_slave.sv \
           src/control_regs.sv \
           src/audio_volume.sv \
           src/spi_iq_slave.sv \
+          src/spi_frame_rx.sv \
+          src/tlv_demux.sv \
+          src/tlv_iq_sink.sv \
+          src/tlv_capture_sink.sv \
           src/async_fifo.sv \
           src/fft256.sv \
           src/butterfly.sv \
@@ -40,6 +44,28 @@ build/$(TOP).bit: build/$(TOP).cfg
 prog: build/$(TOP).bit
 	icesprog $<
 
+# FM build that consumes the TLV-framed IQ link (USE_TLV=1). Same top, selected
+# by parameter; the default `prog` stays raw-IQ. Pair with the Pluto sending
+# TLV_IQ packets (icesugar_stream --mode tlv-fm).
+build/tlv.bit: $(SV_SRCS) $(LPF) build/font_8x16.mem | build
+	yosys -p "chparam -set USE_TLV 1 top; synth_ecp5 -top $(TOP) -json build/tlv.json" $(SV_SRCS)
+	nextpnr-ecp5 $(DEVICE) --json build/tlv.json --textcfg build/tlv.cfg --lpf $(LPF) --freq 25
+	ecppack build/tlv.cfg $@
+
+prog_tlv: build/tlv.bit
+	icesprog $<
+
+# FM-over-TLV using the validated synth-FM DSP config (FM_CIC_R=8), so the only
+# difference from the known-good prog_fm_spi8 test is the TLV framing. Use this
+# for the audio A/B against prog_fm_spi8.
+build/tlv_spi8.bit: $(SV_SRCS) $(LPF) build/font_8x16.mem | build
+	yosys -p "chparam -set USE_TLV 1 -set FM_CIC_R 8 top; synth_ecp5 -top $(TOP) -json build/tlv_spi8.json" $(SV_SRCS)
+	nextpnr-ecp5 $(DEVICE) --json build/tlv_spi8.json --textcfg build/tlv_spi8.cfg --lpf $(LPF) --freq 25
+	ecppack build/tlv_spi8.cfg $@
+
+prog_tlv_spi8: build/tlv_spi8.bit
+	icesprog $<
+
 build/lcd_test.bit: tests/lcd_color_test_top.sv $(LPF) | build
 	yosys -p "synth_ecp5 -top lcd_color_test_top -json build/lcd_test.json" $<
 	nextpnr-ecp5 $(DEVICE) --json build/lcd_test.json --textcfg build/lcd_test.cfg --lpf $(LPF) --freq 25
@@ -56,17 +82,19 @@ build/spi_rx_test.bit: tests/spi_rx_lcd_test_top.sv src/spi_iq_slave.sv $(LPF) |
 prog_spi_rx_test: build/spi_rx_test.bit
 	icesprog $<
 
-# Quantitative link / signal-integrity test. Pluto sends an incrementing 32-bit
-# counter (icesugar_stream --mode link-test); this build checks each received
-# word is prev+1 and shows PASS/FAIL + error/total counts on the LCD.
-# Green = 0 errors, red = errors (latched), blue = no data. Wiggle the wires and
-# watch err_count to measure the link's word-error-rate.
-build/link_test.bit: tests/link_test_top.sv src/spi_iq_slave.sv src/async_fifo.sv $(LPF) | build
-	yosys -p "synth_ecp5 -top link_test_top -json build/link_test.json" tests/link_test_top.sv src/spi_iq_slave.sv src/async_fifo.sv
-	nextpnr-ecp5 $(DEVICE) --json build/link_test.json --textcfg build/link_test.cfg --lpf $(LPF) --freq 25
-	ecppack build/link_test.cfg $@
+# TLV functional test: Pluto sends an incrementing counter wrapped in TLV_IQ
+# packets (icesugar_stream --mode tlv-test). This build runs the real TLV RX
+# chain (spi_frame_rx -> tlv_demux -> tlv_iq_sink) and shows on the LCD:
+# green banner = IQ words reassembled correctly (prev+1), cyan/yellow/magenta
+# rows = iq/image/object packet counts (routing), bottom band red = framing slip.
+TLV_RX_SRCS = tests/tlv_link_test_top.sv src/spi_frame_rx.sv src/async_fifo.sv \
+              src/tlv_demux.sv src/tlv_iq_sink.sv
+build/tlv_link_test.bit: $(TLV_RX_SRCS) $(LPF) | build
+	yosys -p "synth_ecp5 -top tlv_link_test_top -json build/tlv_link_test.json" $(TLV_RX_SRCS)
+	nextpnr-ecp5 $(DEVICE) --json build/tlv_link_test.json --textcfg build/tlv_link_test.cfg --lpf $(LPF) --freq 25
+	ecppack build/tlv_link_test.cfg $@
 
-prog_link_test: build/link_test.bit
+prog_tlv_link_test: build/tlv_link_test.bit
 	icesprog $<
 
 build/i2s_tone_test.bit: tests/i2s_tone_test_top.sv src/i2s_tx.sv $(LPF) | build
@@ -356,6 +384,21 @@ sim_sdram_color: tests/sdram_color_tb.sv $(SDRAM_COLOR_SRCS) | build
 
 # Run every SDRAM-integration sim
 sim_integration: sim_sdram sim_line_cache sim_scan_out sim_arb sim_compositor sim_sdram_test sim_sdram_color
+
+# TLV receive-path unit sims (copied from the TLV bring-up)
+sim_spi_frame_rx: tests/spi_frame_rx_tb.sv src/spi_frame_rx.sv | build
+	iverilog -g2012 -o build/spi_frame_rx.sim $^
+	vvp build/spi_frame_rx.sim
+
+sim_tlv_demux: tests/tlv_demux_tb.sv src/tlv_demux.sv | build
+	iverilog -g2012 -o build/tlv_demux.sim $^
+	vvp build/tlv_demux.sim
+
+sim_tlv: tests/tlv_rx_tb.sv src/spi_frame_rx.sv src/async_fifo.sv src/tlv_demux.sv src/tlv_iq_sink.sv | build
+	iverilog -g2012 -o build/tlv_rx.sim $^
+	vvp build/tlv_rx.sim
+
+sim_tlv_all: sim_spi_frame_rx sim_tlv_demux sim_tlv
 # ── Standalone synthesis of the pixel-shader block (budget / clean-build check).
 #    Not yet wired into top.sv — that is integration #18, blocked on the SDRAM
 #    stack. This measures the shader's area in isolation against the EBR/LUT

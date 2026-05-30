@@ -49,7 +49,8 @@ enum stream_mode {
     MODE_FM = 0,
     MODE_SYNTH_FM,
     MODE_SYNTH_TONE,
-    MODE_LINK_TEST,
+    MODE_TLV_TEST,
+    MODE_TLV_FM,
 };
 
 struct stream_cfg {
@@ -519,25 +520,26 @@ static int stream_synth_tone(const struct stream_cfg *cfg)
 }
 
 /*
- * Signal-integrity / link test: stream an incrementing 32-bit counter over the
- * same JP5 SPI path the IQ stream uses, framed identically (CS per chunk, or
- * per word with --per-word-cs). The iCESugar link_test_top bitstream checks each
- * received word is prev+1 and counts errors. Compare error counts before/after
- * SI changes (slew/drive, grounding, series R) or while flexing the wires.
+ * TLV functional / link test: send an incrementing 32-bit counter wrapped in
+ * TLV_IQ packets (one packet per CS window — the framing the ECP5 tlv_demux
+ * re-syncs on). Inject a TLV_IMAGE_ROW and a TLV_OBJECT_LIST packet every 16 IQ
+ * packets so the demux's type routing is exercised too. The ECP5 tlv_link_test
+ * build checks the reconstructed words are still prev+1.
  */
-static int stream_link_test(const struct stream_cfg *cfg)
+static int stream_tlv_test(const struct stream_cfg *cfg)
 {
     uint32_t counter = 0;
-    unsigned long long total = 0;
+    unsigned long long iq_pkts = 0, img_pkts = 0, obj_pkts = 0;
+    unsigned spp = cfg->chunk_samples ? cfg->chunk_samples : 64;
     struct timeval t0, t1;
 
-    gettimeofday(&t0, NULL);
+    if (spp > 256)
+        spp = 256;   /* keep LEN <= 1024 bytes and packets a sane size */
 
-    printf("Link test: incrementing 32-bit counter, chunk=%u, per_word_cs=%d\n",
-           cfg->chunk_samples, cfg->per_word_cs);
+    gettimeofday(&t0, NULL);
+    printf("TLV test: %u IQ samples/packet, image+object injected every 16 pkts\n", spp);
 
     while (keep_running) {
-        unsigned chunk = cfg->chunk_samples;
         struct timeval now;
 
         if (cfg->duration_sec) {
@@ -546,33 +548,125 @@ static int stream_link_test(const struct stream_cfg *cfg)
                 break;
         }
 
-        if (!cfg->dry_run && !cfg->per_word_cs)
+        /* TLV_IQ packet (type 0x00), one CS window. */
+        if (!cfg->dry_run) {
             spi_select();
+            spi_send_byte(0x00);
+            spi_send_byte((uint8_t)(((spp * 4) >> 8) & 0xff));
+            spi_send_byte((uint8_t)((spp * 4) & 0xff));
+            for (unsigned n = 0; n < spp; n++)
+                spi_send_word32(counter++);
+            spi_deselect();
+        } else {
+            counter += spp;
+        }
+        iq_pkts++;
 
-        for (unsigned n = 0; n < chunk; n++) {
-            if (!cfg->dry_run && cfg->per_word_cs)
-                spi_select();
-            if (!cfg->dry_run)
-                spi_send_word32(counter);
-            if (!cfg->dry_run && cfg->per_word_cs)
-                spi_deselect();
-            if (cfg->word_delay_us)
-                usleep(cfg->word_delay_us);
-            counter++;
-            total++;
+        /* Exercise the other packet types for the routing check. */
+        if (!cfg->dry_run && (iq_pkts % 16 == 0)) {
+            spi_select();
+            spi_send_byte(0x01);                /* TLV_IMAGE_ROW */
+            spi_send_byte(0x00);
+            spi_send_byte(0x08);                /* LEN = 8 */
+            for (unsigned b = 0; b < 8; b++)
+                spi_send_byte((uint8_t)(0x10 + b));
+            spi_deselect();
+            img_pkts++;
+
+            spi_select();
+            spi_send_byte(0x02);                /* TLV_OBJECT_LIST */
+            spi_send_byte(0x00);
+            spi_send_byte(0x04);                /* LEN = 4 */
+            for (unsigned b = 0; b < 4; b++)
+                spi_send_byte((uint8_t)(0xA0 + b));
+            spi_deselect();
+            obj_pkts++;
         }
 
-        if (!cfg->dry_run && !cfg->per_word_cs)
-            spi_deselect();
+        if (cfg->word_delay_us)
+            usleep(cfg->word_delay_us);
     }
 
     gettimeofday(&t1, NULL);
     double elapsed = (double)(t1.tv_sec - t0.tv_sec) +
                      (double)(t1.tv_usec - t0.tv_usec) / 1000000.0;
-    double rate = elapsed > 0.0 ? (double)total / elapsed : 0.0;
 
-    printf("Link test sent %llu words in %.3f s (%.0f words/s)\n",
-           total, elapsed, rate);
+    printf("TLV test sent %llu IQ pkts, %llu image, %llu object in %.3f s\n",
+           iq_pkts, img_pkts, obj_pkts, elapsed);
+    return 0;
+}
+
+/*
+ * Synthetic FM over the TLV link: same generated FM signal as stream_synth_fm,
+ * but each batch of `spp` samples is sent as one TLV_IQ packet (CS-framed). Used
+ * with the ECP5 USE_TLV=1 build (make prog_tlv) to validate the full FM chain
+ * consuming TLV-framed IQ: demux -> tlv_iq_sink -> FFT/CIC/fm_demod -> I2S.
+ */
+static int stream_tlv_fm(const struct stream_cfg *cfg)
+{
+    unsigned rate = cfg->sample_rate ? cfg->sample_rate : 1000000;
+    unsigned spp = cfg->chunk_samples ? cfg->chunk_samples : 256;
+    unsigned long long total = 0;
+    double phase = 0.0, audio_phase = 0.0;
+    double audio_step = 2.0 * M_PI * 1000.0 / (double)rate;
+    double amp = cfg->synth_amp, dev_hz = cfg->synth_dev_hz;
+    struct timeval t0, t1;
+
+    if (spp > 256)
+        spp = 256;   /* keep LEN <= 1024 bytes per packet */
+
+    gettimeofday(&t0, NULL);
+    printf("TLV synth-FM: %u samples/packet, rate=%u Hz, dev=%u Hz\n",
+           spp, rate, cfg->synth_dev_hz);
+
+    while (keep_running) {
+        struct timeval now;
+
+        if (cfg->duration_sec) {
+            gettimeofday(&now, NULL);
+            if ((unsigned)(now.tv_sec - t0.tv_sec) >= cfg->duration_sec)
+                break;
+        }
+
+        if (!cfg->dry_run) {
+            spi_select();
+            spi_send_byte(0x00);                        /* TYPE = TLV_IQ */
+            spi_send_byte((uint8_t)(((spp * 4) >> 8) & 0xff));
+            spi_send_byte((uint8_t)((spp * 4) & 0xff));
+        }
+
+        for (unsigned n = 0; n < spp; n++) {
+            double audio = sin(audio_phase);
+            double freq = dev_hz * audio;
+            int16_t i_val, q_val;
+
+            phase += 2.0 * M_PI * freq / (double)rate;
+            audio_phase += audio_step;
+            if (phase > M_PI)        phase -= 2.0 * M_PI;
+            if (phase < -M_PI)       phase += 2.0 * M_PI;
+            if (audio_phase > M_PI)  audio_phase -= 2.0 * M_PI;
+
+            i_val = (int16_t)(amp * cos(phase));
+            q_val = (int16_t)(amp * sin(phase));
+
+            if (!cfg->dry_run)
+                spi_send_iq(i_val, q_val);              /* 4 bytes = TLV_IQ payload */
+            total++;
+        }
+
+        if (!cfg->dry_run)
+            spi_deselect();
+        if (cfg->word_delay_us)
+            usleep(cfg->word_delay_us);
+    }
+
+    gettimeofday(&t1, NULL);
+    double elapsed = (double)(t1.tv_sec - t0.tv_sec) +
+                     (double)(t1.tv_usec - t0.tv_usec) / 1000000.0;
+    double out_rate = elapsed > 0.0 ? (double)total / elapsed : 0.0;
+
+    printf("TLV synth-FM streamed %llu IQ samples in %.3f s (%.0f samples/s)\n",
+           total, elapsed, out_rate);
     return 0;
 }
 
@@ -582,7 +676,8 @@ static void usage(const char *prog)
     printf("  --mode fm              Stream FM IQ (default)\n");
     printf("  --mode synth-fm        Stream generated FM IQ over the same SPI path\n");
     printf("  --mode synth-tone      Stream a strong generated IQ tone\n");
-    printf("  --mode link-test       Stream an incrementing 32-bit counter (SI/link test)\n");
+    printf("  --mode tlv-test        Stream a counter in TLV_IQ packets (TLV functional test)\n");
+    printf("  --mode tlv-fm          Stream synthetic FM IQ in TLV_IQ packets (FM-over-TLV)\n");
     printf("  --freq-mhz FREQ        RF frequency in MHz (default 95.1)\n");
     printf("  --adc-rate HZ          AD9361 sample rate; 0 tries fallbacks (default 0)\n");
     printf("  --rate HZ              Output IQ rate to FPGA; 0 uses ADC rate (default 1000000)\n");
@@ -628,8 +723,10 @@ static int parse_args(int argc, char **argv, struct stream_cfg *cfg)
                 cfg->mode = MODE_SYNTH_FM;
             else if (strcmp(argv[i], "synth-tone") == 0)
                 cfg->mode = MODE_SYNTH_TONE;
-            else if (strcmp(argv[i], "link-test") == 0)
-                cfg->mode = MODE_LINK_TEST;
+            else if (strcmp(argv[i], "tlv-test") == 0)
+                cfg->mode = MODE_TLV_TEST;
+            else if (strcmp(argv[i], "tlv-fm") == 0)
+                cfg->mode = MODE_TLV_FM;
             else {
                 fprintf(stderr, "unsupported mode: %s\n", argv[i]);
                 return -1;
@@ -709,7 +806,7 @@ int main(int argc, char **argv)
         if (configure_fm(&cfg, &actual_rate) != 0)
             return 1;
     } else if (cfg.mode == MODE_SYNTH_FM || cfg.mode == MODE_SYNTH_TONE ||
-               cfg.mode == MODE_LINK_TEST) {
+               cfg.mode == MODE_TLV_TEST || cfg.mode == MODE_TLV_FM) {
         actual_rate = cfg.sample_rate ? cfg.sample_rate : 1000000;
         printf("Synthetic source: output_rate=%u Hz\n", actual_rate);
     } else {
@@ -738,8 +835,10 @@ int main(int argc, char **argv)
         ret = stream_synth_fm(&cfg) == 0 ? 0 : 1;
     } else if (cfg.mode == MODE_SYNTH_TONE) {
         ret = stream_synth_tone(&cfg) == 0 ? 0 : 1;
-    } else if (cfg.mode == MODE_LINK_TEST) {
-        ret = stream_link_test(&cfg) == 0 ? 0 : 1;
+    } else if (cfg.mode == MODE_TLV_TEST) {
+        ret = stream_tlv_test(&cfg) == 0 ? 0 : 1;
+    } else if (cfg.mode == MODE_TLV_FM) {
+        ret = stream_tlv_fm(&cfg) == 0 ? 0 : 1;
     } else {
         iq = open_iio_readdev(&cfg, actual_rate);
         if (!iq) {

@@ -5,6 +5,8 @@ module top #(
     parameter IQ_PACED = 0,
     parameter IQ_SAMPLE_RATE = 349_000,
     parameter IQ_FIFO_DEPTH = 16,
+    parameter USE_TLV = 0,           // 0 = raw-IQ link (default), 1 = TLV-framed link
+    parameter BYTE_FIFO_DEPTH = 32,  // TLV byte CDC FIFO depth (spi_clk -> CLK)
     parameter CLK_HZ = 25_000_000
 )(
     input logic CLK,
@@ -155,34 +157,173 @@ control_regs u_ctrl (
     .freq_hz (freq_hz)
 );
 
-// IQ SPI
-logic [15:0] spi_i, spi_q;
-logic spi_iq_valid;
-
-spi_iq_slave u_spi_iq (
-    .spi_clk (spi_clk),
-    .spi_cs_n (cs),
-    .spi_mosi (mosi),
-    .i_data (spi_i),
-    .q_data (spi_q),
-    .iq_valid (spi_iq_valid)
-);
-
-// IQ FIFO
-logic [31:0] fifo_wdata, fifo_rdata;
-logic fifo_empty, fifo_full;
-logic fifo_pop;
-logic fifo_pop_d;
-logic iq_sample_tick;
+// ---------------------------------------------------------------------------
+// IQ front-end. Two interchangeable sources feed one shared 32-bit IQ FIFO,
+// selected at build time by USE_TLV. Both converge on the same fifo_rdata /
+// pacer / sys_i,sys_q,sys_iq_valid path below, so everything downstream
+// (FFT/CIC/fm_demod) is identical in either mode.
+//   USE_TLV=0: today's raw link  — every 32 SPI bits is one IQ sample.
+//   USE_TLV=1: TLV-framed link    — spi_frame_rx -> byte CDC FIFO -> tlv_demux
+//              -> tlv_iq_sink; non-IQ packet types route to stub capture sinks.
+// ---------------------------------------------------------------------------
+logic [31:0] fifo_rdata;
+logic        fifo_empty, fifo_full;
+logic        fifo_pop;
+logic        fifo_pop_d;
+logic        iq_sample_tick;
 logic [31:0] iq_rate_acc;
 
-assign fifo_wdata = {spi_i, spi_q};
+// Source-side hookup for the shared IQ FIFO (driven by the selected branch).
+logic        iqsrc_wclk;
+logic        iqsrc_wrst;
+logic [31:0] iqsrc_wdata;
+logic        iqsrc_wpush;
+
+// TLV status counters (module scope so they survive across the generate and
+// can be surfaced on the LCD); tied to 0 in raw mode.
+logic [15:0] tlv_iq_pkts, tlv_img_pkts, tlv_obj_pkts;
+logic [15:0] tlv_unknown, tlv_short, tlv_stray;
+logic [7:0]  tlv_last_type;
+
+generate
+if (USE_TLV == 0) begin : g_rawiq
+    logic [15:0] spi_i, spi_q;
+    logic        spi_iq_valid;
+
+    spi_iq_slave u_spi_iq (
+        .spi_clk  (spi_clk),
+        .spi_cs_n (cs),
+        .spi_mosi (mosi),
+        .i_data   (spi_i),
+        .q_data   (spi_q),
+        .iq_valid (spi_iq_valid)
+    );
+
+    assign iqsrc_wclk  = spi_clk;
+    assign iqsrc_wrst  = spi_rst;
+    assign iqsrc_wdata = {spi_i, spi_q};
+    assign iqsrc_wpush = spi_iq_valid & ~fifo_full & ~spi_rst;
+
+    assign tlv_iq_pkts = 16'd0;
+    assign tlv_img_pkts = 16'd0;
+    assign tlv_obj_pkts = 16'd0;
+    assign tlv_unknown = 16'd0;
+    assign tlv_short = 16'd0;
+    assign tlv_stray = 16'd0;
+    assign tlv_last_type = 8'd0;
+end else begin : g_tlv
+    // SPI byte deserializer (spi_clk domain).
+    logic       fr_valid, fr_sof;
+    logic [7:0] fr_byte;
+
+    spi_frame_rx u_frame_rx (
+        .spi_clk   (spi_clk),
+        .spi_cs_n  (cs),
+        .spi_mosi  (mosi),
+        .byte_valid(fr_valid),
+        .byte_sof  (fr_sof),
+        .byte_data (fr_byte)
+    );
+
+    // Byte CDC FIFO: {sof, byte} crosses spi_clk -> CLK.
+    logic [8:0] byte_rdata;
+    logic       byte_empty, byte_full;
+    logic       byte_pop, byte_pop_d;
+
+    async_fifo #(.WIDTH(9), .DEPTH(BYTE_FIFO_DEPTH)) u_byte_fifo (
+        .wclk  (spi_clk),
+        .wrst  (spi_rst),
+        .wdata ({fr_sof, fr_byte}),
+        .wpush (fr_valid & ~byte_full & ~spi_rst),
+        .wfull (byte_full),
+        .rclk  (CLK),
+        .rrst  (sys_rst),
+        .rdata (byte_rdata),
+        .rpop  (byte_pop),
+        .rempty(byte_empty)
+    );
+
+    // Synchronous-read FIFO: data is valid the cycle after the pop is asserted.
+    assign byte_pop = ~byte_empty;
+    always_ff @(posedge CLK or posedge sys_rst) begin
+        if (sys_rst) byte_pop_d <= 1'b0;
+        else         byte_pop_d <= byte_pop;
+    end
+
+    // Demux: route payload bytes by packet type.
+    logic       pl_valid, pl_sop, pl_eop;
+    logic [7:0] pl_byte, pl_type;
+
+    tlv_demux u_demux (
+        .clk          (CLK),
+        .rst          (sys_rst),
+        .in_valid     (byte_pop_d),
+        .in_sof       (byte_rdata[8]),
+        .in_byte      (byte_rdata[7:0]),
+        .pl_valid     (pl_valid),
+        .pl_sop       (pl_sop),
+        .pl_eop       (pl_eop),
+        .pl_byte      (pl_byte),
+        .pl_type      (pl_type),
+        .iq_pkt_count (tlv_iq_pkts),
+        .img_pkt_count(tlv_img_pkts),
+        .obj_pkt_count(tlv_obj_pkts),
+        .unknown_count(tlv_unknown),
+        .short_count  (tlv_short),
+        .stray_count  (tlv_stray),
+        .last_type    (tlv_last_type)
+    );
+
+    // IQ sink: reassemble {I,Q} words and push into the shared IQ FIFO.
+    logic signed [15:0] tlv_i, tlv_q;
+    logic               tlv_iq_word_valid;
+
+    tlv_iq_sink u_iq_sink (
+        .clk          (CLK),
+        .rst          (sys_rst),
+        .pl_valid     (pl_valid),
+        .pl_sop       (pl_sop),
+        .pl_eop       (pl_eop),
+        .pl_byte      (pl_byte),
+        .pl_type      (pl_type),
+        .i_data       (tlv_i),
+        .q_data       (tlv_q),
+        .iq_word_valid(tlv_iq_word_valid)
+    );
+
+    // Stub sinks for decoded-data types (counters + capture buffer only until
+    // the SDRAM compositor exists). Debug read ports are tied off for now.
+    logic [15:0] img_len_unused, obj_len_unused;
+    logic [7:0]  img_rd_unused, obj_rd_unused;
+
+    tlv_capture_sink #(.CAP_TYPE(8'h01), .DEPTH(256)) u_img_sink (
+        .clk(CLK), .rst(sys_rst),
+        .pl_valid(pl_valid), .pl_sop(pl_sop), .pl_eop(pl_eop),
+        .pl_byte(pl_byte), .pl_type(pl_type),
+        .pkt_count(), .last_len(img_len_unused),
+        .rd_addr(8'd0), .rd_data(img_rd_unused)
+    );
+
+    tlv_capture_sink #(.CAP_TYPE(8'h02), .DEPTH(256)) u_obj_sink (
+        .clk(CLK), .rst(sys_rst),
+        .pl_valid(pl_valid), .pl_sop(pl_sop), .pl_eop(pl_eop),
+        .pl_byte(pl_byte), .pl_type(pl_type),
+        .pkt_count(), .last_len(obj_len_unused),
+        .rd_addr(8'd0), .rd_data(obj_rd_unused)
+    );
+
+    assign iqsrc_wclk  = CLK;
+    assign iqsrc_wrst  = sys_rst;
+    assign iqsrc_wdata = {tlv_i, tlv_q};
+    assign iqsrc_wpush = tlv_iq_word_valid & ~fifo_full;
+end
+endgenerate
 
 async_fifo #(.WIDTH(32), .DEPTH(IQ_FIFO_DEPTH)) u_iq_fifo (
-    .wclk (spi_clk),
-    .wrst (spi_rst),
-    .wdata (fifo_wdata),
-    .wpush (spi_iq_valid & ~fifo_full & ~spi_rst),
+    .wclk (iqsrc_wclk),
+    .wrst (iqsrc_wrst),
+    .wdata (iqsrc_wdata),
+    .wpush (iqsrc_wpush),
     .wfull (fifo_full),
     .rclk (CLK),
     .rrst (sys_rst),
@@ -615,9 +756,12 @@ lcd u_lcd (
     .mode (mode),
     .volume (volume),
     .mute (mute),
-    .dbg_rx_count (dbg_rx_count),
-    .dbg_bin_count (dbg_bin_count),
-    .dbg_last_mag (dbg_last_mag),
+    // In TLV mode the debug fields show TLV framing health instead of the raw
+    // FFT counters: rx = IQ packets seen, bin = unknown-type packets, last =
+    // last packet type. rx_sps still reflects real IQ sample flow in both modes.
+    .dbg_rx_count (USE_TLV ? tlv_iq_pkts[7:0] : dbg_rx_count),
+    .dbg_bin_count (USE_TLV ? tlv_unknown[7:0] : dbg_bin_count),
+    .dbg_last_mag (USE_TLV ? tlv_last_type : dbg_last_mag),
     .rx_sps_bcd (rx_sps_bcd),
     .wf_magnitude (wf_magnitude),
     .wf_bin (wf_bin_req),

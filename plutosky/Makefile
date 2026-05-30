@@ -1,4 +1,4 @@
-.PHONY: all test-build test-deploy test-run spi-reg-build spi-reg-deploy spi-reg-run stream-build stream-deploy stream-run clean
+.PHONY: all test-build test-deploy test-run spi-reg-build spi-reg-deploy spi-reg-run stream-build stream-deploy stream-run stream-stop clean
 
 CROSS   = C:/Xilinx/Vitis/2022.1/gnu/aarch32/nt/gcc-arm-linux-gnueabi/bin/arm-linux-gnueabihf-gcc
 PLUTO   ?= 192.168.2.1
@@ -54,6 +54,11 @@ stream-deploy: stream-build
 
 stream-run: stream-deploy
 	MSYS_NO_PATHCONV=1 $(SSH) '/root/icesugar_stream $(STREAM_ARGS)'
+
+# Stop a running streamer over SSH (Ctrl-C on a non-TTY ssh does not reach it).
+# Sends SIGTERM (which icesugar_stream handles for a clean exit), so no reboot needed.
+stream-stop:
+	MSYS_NO_PATHCONV=1 $(SSH) 'pkill -f icesugar_stream || true'
 
 build:
 	mkdir -p build
