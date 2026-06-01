@@ -40,11 +40,10 @@ assign count = wptr - rptr;
 assign empty = (count == 0);
 assign full  = (count >= DEPTH);         // count (AW+1 bits) widened to compare vs DEPTH
 
-assign rdata = mem[rptr[AW-1:0]];        // combinational head -> first-word fall-through
-
 // Clamp the advance to what's actually buffered (rpop_n max is 2).
 wire [1:0] adv = (count >= {{(AW-1){1'b0}}, rpop_n}) ? rpop_n : count[1:0];
 
+// Control and write: async reset on pointers only.
 always_ff @(posedge clk or posedge rst) begin
     if (rst) begin
         wptr <= '0;
@@ -56,6 +55,12 @@ always_ff @(posedge clk or posedge rst) begin
         end
         rptr <= rptr + adv;
     end
+end
+
+// Read: no async reset so Yosys can infer EBR.
+// rdata is undefined after reset but consumer checks empty before using it.
+always_ff @(posedge clk) begin
+    rdata <= mem[rptr[AW-1:0]];
 end
 
 endmodule

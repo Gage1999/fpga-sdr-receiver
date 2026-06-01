@@ -7,11 +7,9 @@ module top #(
     parameter IQ_FIFO_DEPTH = 16,
     parameter USE_TLV = 0,           // 0 = raw-IQ link (default), 1 = TLV-framed link
     parameter BYTE_FIFO_DEPTH = 32,  // TLV byte CDC FIFO depth (spi_clk -> CLK)
-    parameter I2S_BCLK_DIV = 9,      // I2S sample rate = 25M/(BCLK_DIV*64); 9 -> ~43.4kHz.
-                                     // Matched to the measured demod rate: the Pluto delivers
-                                     // ~352k samples/s, so at FM_CIC_R=8 the demod runs at
-                                     // ~44.0kHz -> 43.4kHz is a ~1.4% match, well within the
-                                     // elastic audio FIFO's skip/repeat range.
+    parameter I2S_AUDIO_RATE = 29_900, // LRCLK target for i2s_tx NCO.
+                                      // Pluto 2.5 MHz ADC, 10:1 sw decim -> ~239200 Hz IQ to FPGA.
+                                      // Audio rate = IQ/FM_CIC_R = 239200/8 = 29900 Hz.
     parameter CLK_HZ = 25_000_000
 )(
     input logic CLK,
@@ -27,6 +25,7 @@ module top #(
     output logic i2s_bclk,
     output logic i2s_lrclk,
     output logic i2s_sdata,
+    output logic i2s_sck,
 
     output logic LCD_CLK,
     output logic LCD_DEN,
@@ -34,6 +33,8 @@ module top #(
     output logic [5:0] LCD_G,
     output logic [4:0] LCD_B
 );
+
+assign i2s_sck = 1'b0;  // PCM5102A SCK-less mode: drive low, chip derives clock from BCK/LRCK
 
 // Clock generation - 100 MHz SDRAM clock and 30 MHz pixel clock from 25 MHz input
 // CLKOP = CLKI * CLKFB_DIV / CLKI_DIV = 25 * 4 = 100 MHz
@@ -575,37 +576,37 @@ function automatic logic signed [7:0] fm_test_step32(input logic [4:0] phase);
     begin
         case (phase)
             5'd0:  fm_test_step32 = 8'sd0;
-            5'd1:  fm_test_step32 = 8'sd1;
-            5'd2:  fm_test_step32 = 8'sd2;
-            5'd3:  fm_test_step32 = 8'sd3;
-            5'd4:  fm_test_step32 = 8'sd4;
-            5'd5:  fm_test_step32 = 8'sd5;
-            5'd6:  fm_test_step32 = 8'sd6;
-            5'd7:  fm_test_step32 = 8'sd6;
-            5'd8:  fm_test_step32 = 8'sd6;
-            5'd9:  fm_test_step32 = 8'sd6;
-            5'd10: fm_test_step32 = 8'sd6;
-            5'd11: fm_test_step32 = 8'sd5;
-            5'd12: fm_test_step32 = 8'sd4;
-            5'd13: fm_test_step32 = 8'sd3;
-            5'd14: fm_test_step32 = 8'sd2;
-            5'd15: fm_test_step32 = 8'sd1;
+            5'd1:  fm_test_step32 = 8'sd0;
+            5'd2:  fm_test_step32 = 8'sd0;
+            5'd3:  fm_test_step32 = 8'sd1;
+            5'd4:  fm_test_step32 = 8'sd1;
+            5'd5:  fm_test_step32 = 8'sd1;
+            5'd6:  fm_test_step32 = 8'sd1;
+            5'd7:  fm_test_step32 = 8'sd1;
+            5'd8:  fm_test_step32 = 8'sd1;
+            5'd9:  fm_test_step32 = 8'sd1;
+            5'd10: fm_test_step32 = 8'sd1;
+            5'd11: fm_test_step32 = 8'sd1;
+            5'd12: fm_test_step32 = 8'sd1;
+            5'd13: fm_test_step32 = 8'sd0;
+            5'd14: fm_test_step32 = 8'sd0;
+            5'd15: fm_test_step32 = 8'sd0;
             5'd16: fm_test_step32 = 8'sd0;
-            5'd17: fm_test_step32 = -8'sd1;
-            5'd18: fm_test_step32 = -8'sd2;
-            5'd19: fm_test_step32 = -8'sd3;
-            5'd20: fm_test_step32 = -8'sd4;
-            5'd21: fm_test_step32 = -8'sd5;
-            5'd22: fm_test_step32 = -8'sd6;
-            5'd23: fm_test_step32 = -8'sd6;
-            5'd24: fm_test_step32 = -8'sd6;
-            5'd25: fm_test_step32 = -8'sd6;
-            5'd26: fm_test_step32 = -8'sd6;
-            5'd27: fm_test_step32 = -8'sd5;
-            5'd28: fm_test_step32 = -8'sd4;
-            5'd29: fm_test_step32 = -8'sd3;
-            5'd30: fm_test_step32 = -8'sd2;
-            default: fm_test_step32 = -8'sd1;
+            5'd17: fm_test_step32 = 8'sd0;
+            5'd18: fm_test_step32 = 8'sd0;
+            5'd19: fm_test_step32 = -8'sd1;
+            5'd20: fm_test_step32 = -8'sd1;
+            5'd21: fm_test_step32 = -8'sd1;
+            5'd22: fm_test_step32 = -8'sd1;
+            5'd23: fm_test_step32 = -8'sd1;
+            5'd24: fm_test_step32 = -8'sd1;
+            5'd25: fm_test_step32 = -8'sd1;
+            5'd26: fm_test_step32 = -8'sd1;
+            5'd27: fm_test_step32 = -8'sd1;
+            5'd28: fm_test_step32 = -8'sd1;
+            5'd29: fm_test_step32 = 8'sd0;
+            5'd30: fm_test_step32 = 8'sd0;
+            default: fm_test_step32 = 8'sd0;
         endcase
     end
 endfunction
@@ -654,7 +655,7 @@ assign cic_in_i = FM_CHAIN_TEST ? fm_test_i : sys_i;
 assign cic_in_q = FM_CHAIN_TEST ? fm_test_q : sys_q;
 assign cic_in_valid = FM_CHAIN_TEST ? fm_test_valid : sys_iq_valid;
 
-// CIC decimator
+// CIC decimator for FFT/waterfall spectrum display.
 logic signed [15:0] dec_i, dec_q;
 logic dec_valid;
 
@@ -669,19 +670,59 @@ cic_decimate #(.IN_W(16), .R(FM_CIC_R), .STAGES(3)) u_cic (
     .out_valid (dec_valid)
 );
 
-// FM demodulator
-logic signed [7:0] audio_sample;
-logic audio_valid;
+// FM demodulator: runs at IQ input rate to preserve the full FM deviation bandwidth.
+// The CIC passband (~11 kHz for R=8) is far too narrow for FM deviations of 50-75 kHz;
+// running the discriminator before the CIC fixes this.
+// IQ is scaled right to keep demod_raw[23:8] within signed 16-bit range:
+//   SPI modes   (IQ amp ~16-30k, dev up to 75 kHz at 349 kHz) -> RSHIFT=4
+//   FM_CHAIN_TEST (IQ amp 20k, dev ~4 kHz at 1 MHz)            -> RSHIFT=1
+localparam int FM_IQ_RSHIFT = FM_CHAIN_TEST ? 1 : 3;
+logic signed [15:0] fm_i_scaled, fm_q_scaled;
+assign fm_i_scaled = cic_in_i >>> FM_IQ_RSHIFT;
+assign fm_q_scaled = cic_in_q >>> FM_IQ_RSHIFT;
+
+logic signed [15:0] audio_raw;
+logic audio_raw_valid;
 
 fm_demod u_fm (
     .clk (CLK),
     .rst (sys_rst),
-    .i_in (dec_i),
-    .q_in (dec_q),
-    .in_valid (dec_valid),
-    .audio_out (audio_sample),
-    .audio_valid (audio_valid)
+    .i_in (fm_i_scaled),
+    .q_in (fm_q_scaled),
+    .in_valid (cic_in_valid),
+    .audio_out (audio_raw),
+    .audio_valid (audio_raw_valid)
 );
+
+// FM_CIC_R:1 audio decimator - averages FM_CIC_R samples to produce audio
+// at IQ_rate/FM_CIC_R Hz, matching the I2S rate set by I2S_AUDIO_RATE.
+// FM_CIC_R must be a power of two (8 for SPI modes, 32 for FM_CHAIN_TEST).
+localparam int AUD_SHIFT = $clog2(FM_CIC_R);
+logic signed [15:0] audio_sample;
+logic audio_valid;
+logic [AUD_SHIFT-1:0] aud_dec_cnt;
+logic signed [AUD_SHIFT+16-1:0] aud_acc;
+
+always_ff @(posedge CLK or posedge sys_rst) begin
+    if (sys_rst) begin
+        aud_dec_cnt <= '0;
+        aud_acc <= '0;
+        audio_sample <= '0;
+        audio_valid <= 1'b0;
+    end else begin
+        audio_valid <= 1'b0;
+        if (audio_raw_valid) begin
+            if (&aud_dec_cnt) begin
+                audio_sample <= (aud_acc + {{(AUD_SHIFT){audio_raw[15]}}, audio_raw}) >>> AUD_SHIFT;
+                audio_valid <= 1'b1;
+                aud_acc <= '0;
+            end else begin
+                aud_acc <= aud_acc + {{(AUD_SHIFT){audio_raw[15]}}, audio_raw};
+            end
+            aud_dec_cnt <= aud_dec_cnt + 1'b1;
+        end
+    end
+end
 
 // I2S audio
 logic signed [15:0] audio_sample_16;
@@ -744,9 +785,9 @@ end
 // ---- Elastic audio FIFO: decouple the bursty fm_demod output rate from the
 // fixed I2S playback rate, with skip/repeat rate adaptation (audio_fifo.sv).
 // Without it the DAC under/over-samples the demod stream -> distortion. ----
-localparam int AFIFO_DEPTH = 1024;
-localparam int AFIFO_LOW   = AFIFO_DEPTH/4;       // below -> repeat (hold) to refill
-localparam int AFIFO_HIGH  = (AFIFO_DEPTH*3)/4;   // above -> skip one to catch up
+localparam int AFIFO_DEPTH = 64;
+localparam int AFIFO_LOW   = AFIFO_DEPTH * 7 / 16;  // below -> repeat (hold) to refill
+localparam int AFIFO_HIGH  = AFIFO_DEPTH * 9 / 16;  // above -> skip one to catch up
 
 logic [15:0] afifo_rdata;
 logic        afifo_empty, afifo_full;
@@ -755,6 +796,23 @@ logic [1:0]  afifo_pop_n;
 logic [15:0] audio_held;
 logic        i2s_sample_req_d;
 wire         sample_req_edge = i2s_sample_req & ~i2s_sample_req_d;
+
+// Fix B: rate-limit skips so corrections are spread in time rather than clustered.
+// At 43403 Hz I2S and ~178 excess audio samples/sec, one skip per 200 frames
+// (4.6 ms) keeps the buffer balanced while preventing audible burst artifacts.
+localparam int SKIP_GAP = 200;
+logic [$clog2(SKIP_GAP+1)-1:0] skip_cooldown;
+
+always_ff @(posedge CLK or posedge sys_rst) begin
+    if (sys_rst)
+        skip_cooldown <= '0;
+    else if (sample_req_edge) begin
+        if (skip_cooldown > 0)
+            skip_cooldown <= skip_cooldown - 1'b1;
+        else if (afifo_count >= AFIFO_HIGH)
+            skip_cooldown <= SKIP_GAP[$bits(skip_cooldown)-1:0];
+    end
+end
 
 audio_fifo #(.WIDTH(16), .DEPTH(AFIFO_DEPTH)) u_afifo (
     .clk    (CLK),
@@ -777,9 +835,9 @@ end
 always_comb begin
     afifo_pop_n = 2'd0;
     if (sample_req_edge) begin
-        if      (afifo_count <= AFIFO_LOW)  afifo_pop_n = 2'd0;  // low -> repeat
-        else if (afifo_count >= AFIFO_HIGH) afifo_pop_n = 2'd2;  // high -> skip one
-        else                                afifo_pop_n = 2'd1;  // normal
+        if      (afifo_count <= AFIFO_LOW)                             afifo_pop_n = 2'd0;
+        else if (afifo_count >= AFIFO_HIGH && skip_cooldown == '0)     afifo_pop_n = 2'd2;
+        else                                                           afifo_pop_n = 2'd1;
     end
 end
 
@@ -793,7 +851,7 @@ wire signed [15:0] audio_play = afifo_empty ? audio_held : afifo_rdata;
 
 assign audio_to_i2s = AUDIO_TEST_TONE ? tone_sample : audio_play;
 
-i2s_tx #(.BCLK_DIV(I2S_BCLK_DIV)) u_i2s (
+i2s_tx #(.AUDIO_RATE(I2S_AUDIO_RATE), .CLK_HZ(CLK_HZ)) u_i2s (
     .clk (CLK),
     .rst (sys_rst),
     .left_in (audio_to_i2s),

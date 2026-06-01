@@ -1,5 +1,5 @@
 
-.PHONY: all prog prog_tlv prog_tlv_spi8 sim sim_i2s sim_fm sim_lcd sim_fft sim_sdram sim_sdram_bl sim_line_cache sim_scan_out sim_arb sim_compositor sim_integration sim_sdram_test sim_sdram_color prog_sdram_test prog_sdram_color prog_sdram_color75 prog_sdram_color_ci prog_sdram_cal prog_sdram_cal_guard prog_sdram_cal_bl8 prog_sdram_cal_75 prog_lcd_test prog_spi_rx_test prog_tlv_link_test sim_spi_frame_rx sim_tlv_demux sim_tlv sim_tlv_all prog_i2s_tone_test prog_full_audio_tone prog_fm_chain_test prog_fm_spi12 prog_fm_spi8 prog_fm_spi8_paced clean
+.PHONY: all prog prog_tlv sim sim_fm sim_lcd sim_fft sim_sdram sim_sdram_bl sim_line_cache sim_scan_out sim_arb sim_compositor sim_integration sim_sdram_test sim_sdram_color prog_sdram_test prog_sdram_color prog_sdram_color75 prog_sdram_color_ci prog_sdram_cal prog_sdram_cal_guard prog_sdram_cal_bl8 prog_sdram_cal_75 prog_lcd_test prog_spi_rx_test prog_tlv_link_test sim_spi_frame_rx sim_tlv_demux sim_tlv sim_tlv_all prog_fm_audio_test prog_fm_audio_tone_test prog_fm_audio_iq_test clean
 
 SV_SRCS = src/top.sv \
           src/spi_cmd_slave.sv \
@@ -56,17 +56,6 @@ build/tlv.bit: $(SV_SRCS) $(LPF) build/font_8x16.mem | build
 prog_tlv: build/tlv.bit
 	icesprog $<
 
-# FM-over-TLV using the validated synth-FM DSP config (FM_CIC_R=8), so the only
-# difference from the known-good prog_fm_spi8 test is the TLV framing. Use this
-# for the audio A/B against prog_fm_spi8.
-build/tlv_spi8.bit: $(SV_SRCS) $(LPF) build/font_8x16.mem | build
-	yosys -p "chparam -set USE_TLV 1 -set FM_CIC_R 8 top; synth_ecp5 -top $(TOP) -json build/tlv_spi8.json" $(SV_SRCS)
-	nextpnr-ecp5 $(DEVICE) --json build/tlv_spi8.json --textcfg build/tlv_spi8.cfg --lpf $(LPF) --freq 25
-	ecppack build/tlv_spi8.cfg $@
-
-prog_tlv_spi8: build/tlv_spi8.bit
-	icesprog $<
-
 build/lcd_test.bit: tests/lcd_color_test_top.sv $(LPF) | build
 	yosys -p "synth_ecp5 -top lcd_color_test_top -json build/lcd_test.json" $<
 	nextpnr-ecp5 $(DEVICE) --json build/lcd_test.json --textcfg build/lcd_test.cfg --lpf $(LPF) --freq 25
@@ -98,52 +87,46 @@ build/tlv_link_test.bit: $(TLV_RX_SRCS) $(LPF) | build
 prog_tlv_link_test: build/tlv_link_test.bit
 	icesprog $<
 
-build/i2s_tone_test.bit: tests/i2s_tone_test_top.sv src/i2s_tx.sv $(LPF) | build
-	yosys -p "synth_ecp5 -top i2s_tone_test_top -json build/i2s_tone_test.json" tests/i2s_tone_test_top.sv src/i2s_tx.sv
-	nextpnr-ecp5 $(DEVICE) --json build/i2s_tone_test.json --textcfg build/i2s_tone_test.cfg --lpf $(LPF) --freq 25
-	ecppack build/i2s_tone_test.cfg $@
+# Minimal FM audio path: SPI IQ -> paced FIFO -> FM demod -> audio FIFO -> I2S.
+# No LCD, FFT, or waterfall; this is the hardware-proven audio baseline.
+FM_AUDIO_IQ_RATE       = 260417
+FM_AUDIO_I2S_RATE      = 32552
+FM_AUDIO_BCLK_HALF     = 6
+FM_AUDIO_IQ_FIFO_DEPTH = 8192
+FM_AUDIO_IQ_PREROLL    = 4096
 
-prog_i2s_tone_test: build/i2s_tone_test.bit
+FM_AUDIO_TEST_SRCS = tests/fm_audio_test_top.sv \
+                     src/spi_iq_slave.sv \
+                     src/async_fifo.sv \
+                     src/fm_demod.sv \
+                     src/audio_fifo.sv \
+                     src/i2s_tx.sv
+
+build/fm_audio_test.bit: $(FM_AUDIO_TEST_SRCS) $(LPF) | build
+	yosys -p "chparam -set IQ_FIFO_DEPTH $(FM_AUDIO_IQ_FIFO_DEPTH) -set IQ_PREROLL_SAMPLES $(FM_AUDIO_IQ_PREROLL) -set IQ_SAMPLE_RATE $(FM_AUDIO_IQ_RATE) -set I2S_AUDIO_RATE $(FM_AUDIO_I2S_RATE) -set I2S_BCLK_HALF_CYCLES $(FM_AUDIO_BCLK_HALF) fm_audio_test_top; synth_ecp5 -top fm_audio_test_top -json build/fm_audio_test.json" $(FM_AUDIO_TEST_SRCS)
+	nextpnr-ecp5 $(DEVICE) --json build/fm_audio_test.json --textcfg build/fm_audio_test.cfg --lpf $(LPF) --placer heap
+	ecppack build/fm_audio_test.cfg $@
+
+prog_fm_audio_test: build/fm_audio_test.bit
 	icesprog $<
 
-build/full_audio_tone.bit: $(SV_SRCS) $(LPF) build/font_8x16.mem | build
-	yosys -p "chparam -set AUDIO_TEST_TONE 1 top; synth_ecp5 -top $(TOP) -json build/full_audio_tone.json" $(SV_SRCS)
-	nextpnr-ecp5 $(DEVICE) --json build/full_audio_tone.json --textcfg build/full_audio_tone.cfg --lpf $(LPF) --freq 25
-	ecppack build/full_audio_tone.cfg $@
+# Diagnostics for isolating the audio path:
+# - tone: bypasses SPI and FM demod, exercises I2S/DAC only.
+# - iq: generates FM IQ in fabric, exercises FPGA demod/audio without Pluto SPI.
+build/fm_audio_tone_test.bit: $(FM_AUDIO_TEST_SRCS) $(LPF) | build
+	yosys -p "chparam -set AUDIO_TEST_TONE 1 -set I2S_AUDIO_RATE $(FM_AUDIO_I2S_RATE) -set I2S_BCLK_HALF_CYCLES $(FM_AUDIO_BCLK_HALF) fm_audio_test_top; synth_ecp5 -top fm_audio_test_top -json build/fm_audio_tone_test.json" $(FM_AUDIO_TEST_SRCS)
+	nextpnr-ecp5 $(DEVICE) --json build/fm_audio_tone_test.json --textcfg build/fm_audio_tone_test.cfg --lpf $(LPF) --placer heap
+	ecppack build/fm_audio_tone_test.cfg $@
 
-prog_full_audio_tone: build/full_audio_tone.bit
+prog_fm_audio_tone_test: build/fm_audio_tone_test.bit
 	icesprog $<
 
-build/fm_chain_test.bit: $(SV_SRCS) $(LPF) build/font_8x16.mem | build
-	yosys -p "chparam -set FM_CHAIN_TEST 1 top; synth_ecp5 -top $(TOP) -json build/fm_chain_test.json" $(SV_SRCS)
-	nextpnr-ecp5 $(DEVICE) --json build/fm_chain_test.json --textcfg build/fm_chain_test.cfg --lpf $(LPF) --freq 25
-	ecppack build/fm_chain_test.cfg $@
+build/fm_audio_iq_test.bit: $(FM_AUDIO_TEST_SRCS) $(LPF) | build
+	yosys -p "chparam -set IQ_TEST_FM 1 -set IQ_SAMPLE_RATE $(FM_AUDIO_IQ_RATE) -set I2S_AUDIO_RATE $(FM_AUDIO_I2S_RATE) -set I2S_BCLK_HALF_CYCLES $(FM_AUDIO_BCLK_HALF) fm_audio_test_top; synth_ecp5 -top fm_audio_test_top -json build/fm_audio_iq_test.json" $(FM_AUDIO_TEST_SRCS)
+	nextpnr-ecp5 $(DEVICE) --json build/fm_audio_iq_test.json --textcfg build/fm_audio_iq_test.cfg --lpf $(LPF) --placer heap
+	ecppack build/fm_audio_iq_test.cfg $@
 
-prog_fm_chain_test: build/fm_chain_test.bit
-	icesprog $<
-
-build/fm_spi12.bit: $(SV_SRCS) $(LPF) build/font_8x16.mem | build
-	yosys -p "chparam -set FM_CIC_R 12 top; synth_ecp5 -top $(TOP) -json build/fm_spi12.json" $(SV_SRCS)
-	nextpnr-ecp5 $(DEVICE) --json build/fm_spi12.json --textcfg build/fm_spi12.cfg --lpf $(LPF) --freq 25
-	ecppack build/fm_spi12.cfg $@
-
-prog_fm_spi12: build/fm_spi12.bit
-	icesprog $<
-
-build/fm_spi8.bit: $(SV_SRCS) $(LPF) build/font_8x16.mem | build
-	yosys -p "chparam -set FM_CIC_R 8 top; synth_ecp5 -top $(TOP) -json build/fm_spi8.json" $(SV_SRCS)
-	nextpnr-ecp5 $(DEVICE) --json build/fm_spi8.json --textcfg build/fm_spi8.cfg --lpf $(LPF) --freq 25
-	ecppack build/fm_spi8.cfg $@
-
-prog_fm_spi8: build/fm_spi8.bit
-	icesprog $<
-
-build/fm_spi8_paced.bit: $(SV_SRCS) $(LPF) build/font_8x16.mem | build
-	yosys -p "chparam -set FM_CIC_R 8 -set IQ_PACED 1 -set IQ_SAMPLE_RATE 349000 -set IQ_FIFO_DEPTH 64 top; synth_ecp5 -top $(TOP) -json build/fm_spi8_paced.json" $(SV_SRCS)
-	nextpnr-ecp5 $(DEVICE) --json build/fm_spi8_paced.json --textcfg build/fm_spi8_paced.cfg --lpf $(LPF) --freq 25
-	ecppack build/fm_spi8_paced.cfg $@
-
-prog_fm_spi8_paced: build/fm_spi8_paced.bit
+prog_fm_audio_iq_test: build/fm_audio_iq_test.bit
 	icesprog $<
 
 # SDRAM bring-up test: write/read pattern, whole LCD green=pass / red=fail / blue=running
@@ -328,10 +311,6 @@ sim: tb/top_tb.sv $(SV_SRCS) build/font_8x16.mem | build
 	iverilog -g2012 -DSIMULATION -o build/$(TOP).sim tb/top_tb.sv $(SV_SRCS)
 	vvp build/$(TOP).sim
 	gtkwave build/$(TOP).vcd
-
-sim_i2s: tb/tb_i2s_tx.sv src/i2s_tx.sv | build
-	iverilog -g2012 -o build/i2s.sim $^
-	vvp build/i2s.sim
 
 sim_fm: tb/tb_fm_demod.sv src/fm_demod.sv | build
 	iverilog -g2012 -o build/fm_demod.sim $^

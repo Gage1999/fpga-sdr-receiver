@@ -299,6 +299,32 @@ static int16_t scale_iio_sample(int32_t x, unsigned shift)
     return (int16_t)y;
 }
 
+static void pace_samples(unsigned long long total, unsigned rate, const struct timeval *t0)
+{
+    struct timeval now;
+    double target_s;
+    double elapsed_s;
+    double sleep_s;
+
+    if (rate == 0 || total == 0)
+        return;
+
+    target_s = (double)total / (double)rate;
+
+    for (;;) {
+        gettimeofday(&now, NULL);
+        elapsed_s = (double)(now.tv_sec - t0->tv_sec) +
+                    (double)(now.tv_usec - t0->tv_usec) / 1000000.0;
+        if (elapsed_s >= target_s)
+            break;
+
+        sleep_s = target_s - elapsed_s;
+        /* Avoid sub-millisecond usleep jitter; sleep only when comfortably ahead. */
+        if (sleep_s > 0.002)
+            usleep((useconds_t)((sleep_s - 0.001) * 1000000.0));
+    }
+}
+
 static int stream_iq(FILE *src, const struct stream_cfg *cfg, unsigned actual_rate)
 {
     int16_t *buf;
@@ -324,14 +350,15 @@ static int stream_iq(FILE *src, const struct stream_cfg *cfg, unsigned actual_ra
            out_rate ? out_rate : in_rate, cfg->chunk_samples, cfg->iq_shift,
            cfg->dc_block ? "on" : "off");
 
+    if (!cfg->dry_run && !cfg->per_word_cs)
+        spi_select();
+
     while (keep_running) {
         size_t got = fread(buf, sizeof(int16_t), words_per_chunk, src);
         if (got == 0)
             break;
 
         got &= ~(size_t)1;
-        if (!cfg->dry_run && !cfg->per_word_cs)
-            spi_select();
 
         for (size_t n = 0; n < got; n += 2) {
             int32_t raw_i = buf[n];
@@ -374,12 +401,12 @@ static int stream_iq(FILE *src, const struct stream_cfg *cfg, unsigned actual_ra
                 total++;
         }
 
-        if (!cfg->dry_run && !cfg->per_word_cs)
-            spi_deselect();
-
         if (got < words_per_chunk)
             break;
     }
+
+    if (!cfg->dry_run && !cfg->per_word_cs)
+        spi_deselect();
 
     gettimeofday(&t1, NULL);
     double elapsed = (double)(t1.tv_sec - t0.tv_sec) +
@@ -406,6 +433,9 @@ static int stream_synth_fm(const struct stream_cfg *cfg)
 
     gettimeofday(&t0, NULL);
 
+    if (!cfg->dry_run && !cfg->per_word_cs)
+        spi_select();
+
     while (keep_running) {
         unsigned chunk = cfg->chunk_samples;
         struct timeval now;
@@ -415,9 +445,6 @@ static int stream_synth_fm(const struct stream_cfg *cfg)
             if ((unsigned)(now.tv_sec - t0.tv_sec) >= cfg->duration_sec)
                 break;
         }
-
-        if (!cfg->dry_run && !cfg->per_word_cs)
-            spi_select();
 
         for (unsigned n = 0; n < chunk; n++) {
             double audio = sin(audio_phase);
@@ -448,9 +475,11 @@ static int stream_synth_fm(const struct stream_cfg *cfg)
             total++;
         }
 
-        if (!cfg->dry_run && !cfg->per_word_cs)
-            spi_deselect();
+        pace_samples(total, rate, &t0);
     }
+
+    if (!cfg->dry_run && !cfg->per_word_cs)
+        spi_deselect();
 
     gettimeofday(&t1, NULL);
     double elapsed = (double)(t1.tv_sec - t0.tv_sec) +
@@ -473,6 +502,9 @@ static int stream_synth_tone(const struct stream_cfg *cfg)
 
     gettimeofday(&t0, NULL);
 
+    if (!cfg->dry_run && !cfg->per_word_cs)
+        spi_select();
+
     while (keep_running) {
         unsigned chunk = cfg->chunk_samples;
         struct timeval now;
@@ -482,9 +514,6 @@ static int stream_synth_tone(const struct stream_cfg *cfg)
             if ((unsigned)(now.tv_sec - t0.tv_sec) >= cfg->duration_sec)
                 break;
         }
-
-        if (!cfg->dry_run && !cfg->per_word_cs)
-            spi_select();
 
         for (unsigned n = 0; n < chunk; n++) {
             int16_t i_val = (int16_t)(amp * cos(phase));
@@ -505,9 +534,11 @@ static int stream_synth_tone(const struct stream_cfg *cfg)
             total++;
         }
 
-        if (!cfg->dry_run && !cfg->per_word_cs)
-            spi_deselect();
+        pace_samples(total, rate, &t0);
     }
+
+    if (!cfg->dry_run && !cfg->per_word_cs)
+        spi_deselect();
 
     gettimeofday(&t1, NULL);
     double elapsed = (double)(t1.tv_sec - t0.tv_sec) +
@@ -684,7 +715,7 @@ static void usage(const char *prog)
     printf("  --rf-bw HZ             AD9361 RF bandwidth (default 1000000)\n");
     printf("  --duration SEC         Run length; 0 means until Ctrl-C (default 0)\n");
     printf("  --iio-buf N            iio_readdev buffer size (default 8192)\n");
-    printf("  --chunk-samples N      SPI CS chunk size in IQ samples (default 1024)\n");
+    printf("  --chunk-samples N      Processing chunk size in IQ samples (default 1024)\n");
     printf("  --iq-shift N           Live IQ left shift before SPI (default 4)\n");
     printf("  --dc-shift N           Live IQ DC block shift (default 12)\n");
     printf("  --no-dc-block          Disable live IQ DC blocking\n");

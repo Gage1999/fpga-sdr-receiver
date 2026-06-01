@@ -229,19 +229,19 @@ Current useful iCeSugar targets:
 
 | Target | Purpose |
 |--------|---------|
-| `make prog` | Normal full build, `FM_CIC_R=32` |
+| `make prog` | Normal full build |
 | `make prog_lcd_test` | LCD color-bar wiring test |
 | `make prog_spi_rx_test` | PlutoSky-to-iCeSugar SPI receive display test |
-| `make prog_i2s_tone_test` | Standalone I2S/DAC tone test |
-| `make prog_full_audio_tone` | Full LCD path plus direct I2S tone |
-| `make prog_fm_chain_test` | Internal synthetic FM through FPGA audio chain |
-| `make prog_fm_spi8` | Current best external synthetic FM test build |
-| `make prog_fm_spi12` | Alternate debug build for different SPI/audio rate |
+| `make prog_fm_audio_test` | Hardware-proven minimal FM audio path |
+| `make prog_fm_audio_tone_test` | I2S/DAC diagnostic tone using the FM audio clocking |
+| `make prog_fm_audio_iq_test` | FPGA-generated FM IQ through the demod/audio path |
+| `make prog_tlv` | Full build with TLV-framed IQ input enabled |
+| `make prog_tlv_link_test` | TLV receive/link diagnostic |
 
-For the current burst-mode synthetic FM audio test, use:
+For the current FM audio baseline, use:
 
 ```powershell
-make prog_fm_spi8
+make prog_fm_audio_test
 ```
 
 ---
@@ -251,7 +251,6 @@ make prog_fm_spi8
 From `icesugar_pro/`:
 
 ```powershell
-make sim_i2s
 make sim_fm
 make sim_lcd
 make sim_fft
@@ -323,7 +322,7 @@ First program the iCeSugar with the normal or debug bitstream:
 
 ```powershell
 cd icesugar_pro
-make prog_fm_spi8
+make prog_fm_audio_test
 ```
 
 Then run the simple PlutoSky IQ test:
@@ -345,34 +344,27 @@ Current iCeSugar CS0 landing pins:
 
 | PlutoSky JP5 signal | iCeSugar signal | iCeSugar site |
 |---------------------|-----------------|---------------|
-| SCK | `spi_clk` | D7 |
-| MOSI | `mosi` | D8 |
-| CS | `cs` | D9 |
+| SCK | `spi_clk` | G2 |
+| MOSI | `mosi` | K1 |
+| CS | `cs` | R3 |
 
 ---
 
 ## 14. Current Synthetic FM Test
 
-The current best external synthetic FM test uses iCeSugar `prog_fm_spi8` and a
-large burst from the PlutoSky userspace streamer:
+The current external synthetic FM test uses the standalone FM audio bitstream
+and the paced PlutoSky streamer:
 
 ```powershell
 cd icesugar_pro
-make prog_fm_spi8
+make prog_fm_audio_test
 
 cd ..\plutosky
-make stream-run STREAM_ARGS="--mode synth-fm --rate 349000 --duration 20 --synth-amp 12000 --synth-dev 2500 --chunk-samples 65536"
+make synth-fm-run
 ```
 
-Recent measured result:
-
-```text
-Requested: about 349000 samples/s
-Actual:    about 348647 samples/s
-```
-
-This is the best synthetic FM audio test so far. Some pulsing/static can still
-occur because the stream is userspace-driven and not hardware paced.
+This should produce a clean tone. If it does not, compare against
+`prog_fm_audio_iq_test` to separate Pluto/SPI delivery from FPGA demod/audio.
 
 For display-only SPI sanity, this conservative command is also useful:
 
@@ -386,31 +378,26 @@ Per-word CS is reliable for wiring/debug, but it is too slow for clean FM audio.
 
 ## 15. Live FM Test Starting Point
 
-Live FM testing is the next step after synthetic FM. Start from the same
-iCeSugar build:
+Live FM uses the same iCeSugar build:
 
 ```powershell
 cd icesugar_pro
-make prog_fm_spi8
+make prog_fm_audio_test
 ```
 
 Then try PlutoSky live FM mode:
 
 ```powershell
 cd ..\plutosky
-make stream-run STREAM_ARGS="--mode fm --freq-mhz 95.1 --adc-rate 0 --rate 349000 --duration 30 --chunk-samples 65536 --iq-shift 3 --dc-shift 12"
+make radio-run FREQ_MHZ=95.1
 ```
 
 Notes:
 
 - Change `--freq-mhz` to a strong local FM station.
-- `--adc-rate 0` lets the app try its fallback AD9363 sample rates.
-- `--iq-shift` controls live IQ gain before SPI. Try `2` if audio sounds clipped.
-- `--dc-shift` controls IQ DC removal. Add `--no-dc-block` if you need to compare
-  against the raw IIO samples.
-- The final printed `samples/s` matters. It should be near the requested output
-  rate for the current `prog_fm_spi8` test.
-- This is still a development path, not a final hardware-paced streamer.
+- `radio-run` keeps the Pluto output rate matched to `prog_fm_audio_test`.
+- Use `make stream-run STREAM_ARGS="..."` only when you need to override IQ
+  shift, DC removal, bandwidth, or duration manually.
 
 ---
 
@@ -419,8 +406,6 @@ Notes:
 - JP5 SPI is currently about 12.5 MHz.
 - Jumper-wire signal integrity matters. Keep SCK, MOSI, CS, and GND short.
 - Per-word CS is too slow for audio-rate FM.
-- Burst userspace streaming is much faster, but still has timing jitter and
-  possible chunk-gap artifacts.
-- A future hardware-paced or DMA-style streamer is expected for cleaner final
-  FM audio.
+- The standalone FM audio bitstream relies on a large FPGA IQ FIFO/preroll to
+  absorb Pluto/Linux userspace timing jitter.
 
