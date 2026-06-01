@@ -28,14 +28,18 @@ logic [ADDR_W:0] rptr_gray = '0;
 logic [ADDR_W:0] rptr_gray_s1 = '0, rptr_gray_s2 = '0;
 logic [ADDR_W:0] wptr_gray_s1 = '0, wptr_gray_s2 = '0;
 
-// Write side
+// Write side: memory separate from pointer reset so yosys infers EBR.
+always_ff @(posedge wclk) begin
+    if (wpush && !wfull)
+        mem[wptr_bin[ADDR_W-1:0]] <= wdata;
+end
+
 always_ff @(posedge wclk or posedge wrst) begin
     if (wrst) begin
-        wptr_bin <= '0;
+        wptr_bin  <= '0;
         wptr_gray <= '0;
     end else if (wpush && !wfull) begin
-        mem[wptr_bin[ADDR_W-1:0]] <= wdata;
-        wptr_bin <= wptr_bin + 1'b1;
+        wptr_bin  <= wptr_bin + 1'b1;
         wptr_gray <= (wptr_bin + 1'b1) ^ ((wptr_bin + 1'b1) >> 1);
     end
 end

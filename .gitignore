@@ -56,3 +56,4 @@ icesugar_pro/build/
 /build/
 # Generated mem-init asset (derived from riverside_ucr.bin); too large to track
 icesugar_pro/model/assets/*.mem
+*.jpeg
