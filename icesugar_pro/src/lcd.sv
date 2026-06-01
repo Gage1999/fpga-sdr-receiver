@@ -1,4 +1,6 @@
-module lcd (
+module lcd #(
+    parameter WF_ROWS = 240
+)(
     input logic rst,
     input logic pclk,
     input logic [2:0] mode,
@@ -82,7 +84,7 @@ logic in_wf;
 logic [22:0] bin_product;
 
 always_comb begin
-    in_wf = (mode == MODE_FM) && (x < 11'd768) && (y < 10'd360);
+    in_wf = (mode == MODE_FM) && (x < 11'd768) && (y < 10'(WF_ROWS));
     bin_product = 23'(x) * 23'd2731;
     display_bin = bin_product[20:13];
     bin_req = in_wf ? display_bin + 8'd128 : 8'd0;

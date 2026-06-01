@@ -45,12 +45,16 @@
 #define IIO_NAME_PHY "ad9361-phy"
 #define IIO_NAME_RX  "cf-ad9361-lpc"
 
+#define SPI_CS_LOW_DRAIN_SPINS  8000u
+#define SPI_CS_HIGH_GAP_SPINS    400u
+
 enum stream_mode {
     MODE_FM = 0,
     MODE_SYNTH_FM,
     MODE_SYNTH_TONE,
     MODE_TLV_TEST,
     MODE_TLV_FM,
+    MODE_TLV_RADIO,
 };
 
 struct stream_cfg {
@@ -67,6 +71,8 @@ struct stream_cfg {
     unsigned iq_shift;
     unsigned dc_shift;
     unsigned word_delay_us;
+    double rx_gain_db;
+    char gain_mode[32];
     int dry_run;
     int synth_source;
     int per_word_cs;
@@ -110,8 +116,21 @@ static void spi_deselect(void)
 {
     while (!(spi_rd(SPISR) & SPISR_TX_EMPTY))
         ;
-    usleep(2);
+    /*
+     * TX_EMPTY means the AXI SPI transmit FIFO has drained, but the final byte
+     * may still be leaving the shifter. Keep CS low briefly so the FPGA sees
+     * the last TLV payload byte before the packet ends.
+     */
+    for (volatile unsigned i = 0; i < SPI_CS_LOW_DRAIN_SPINS; i++)
+        ;
     spi_wr(SPISSR, 0xFFFFFFFF);
+    /*
+     * Give the FPGA SPI slave a real CS-high gap without yielding to Linux.
+     * A tiny usleep here can become a millisecond-scale stall on the Pluto,
+     * which starves the FPGA IQ FIFO at a regular packet cadence.
+     */
+    for (volatile unsigned i = 0; i < SPI_CS_HIGH_GAP_SPINS; i++)
+        ;
 }
 
 static void spi_send_byte(uint8_t byte)
@@ -189,6 +208,47 @@ static int write_attr(const char *dev, const char *attr, unsigned long long valu
     return 0;
 }
 
+static int write_attr_str(const char *dev, const char *attr, const char *value)
+{
+    char path[256];
+    FILE *f;
+
+    snprintf(path, sizeof(path), "%s/%s", dev, attr);
+    f = fopen(path, "w");
+    if (!f) {
+        fprintf(stderr, "open %s: %s\n", path, strerror(errno));
+        return -1;
+    }
+
+    fprintf(f, "%s\n", value);
+    if (fclose(f) != 0) {
+        fprintf(stderr, "write %s: %s\n", path, strerror(errno));
+        return -1;
+    }
+
+    return 0;
+}
+
+static int write_attr_double(const char *dev, const char *attr, double value)
+{
+    char text[64];
+
+    snprintf(text, sizeof(text), "%.2f", value);
+    return write_attr_str(dev, attr, text);
+}
+
+static void try_write_attr_str(const char *dev, const char *attr, const char *value)
+{
+    if (write_attr_str(dev, attr, value) != 0)
+        fprintf(stderr, "warning: could not set %s=%s\n", attr, value);
+}
+
+static void try_write_attr_double(const char *dev, const char *attr, double value)
+{
+    if (write_attr_double(dev, attr, value) != 0)
+        fprintf(stderr, "warning: could not set %s=%.2f\n", attr, value);
+}
+
 static unsigned read_attr_u32(const char *dev, const char *attr)
 {
     char path[256];
@@ -252,12 +312,26 @@ static int configure_fm(const struct stream_cfg *cfg, unsigned *actual_rate)
     if (write_attr(phy, "in_voltage_rf_bandwidth", cfg->rf_bw) != 0)
         return -1;
 
+    if (cfg->gain_mode[0]) {
+        try_write_attr_str(phy, "in_voltage0_gain_control_mode", cfg->gain_mode);
+        try_write_attr_str(phy, "in_voltage1_gain_control_mode", cfg->gain_mode);
+    }
+
+    if (cfg->rx_gain_db >= 0.0) {
+        try_write_attr_double(phy, "in_voltage0_hardwaregain", cfg->rx_gain_db);
+        try_write_attr_double(phy, "in_voltage1_hardwaregain", cfg->rx_gain_db);
+    }
+
     *actual_rate = read_attr_u32(phy, "in_voltage_sampling_frequency");
     if (*actual_rate == 0)
         *actual_rate = rates[0];
 
-    printf("FM configured: %.4f MHz, sample_rate=%u Hz, rf_bw=%u Hz\n",
-           cfg->freq_mhz, *actual_rate, cfg->rf_bw);
+    printf("FM configured: %.4f MHz, sample_rate=%u Hz, rf_bw=%u Hz, gain_mode=%s",
+           cfg->freq_mhz, *actual_rate, cfg->rf_bw,
+           cfg->gain_mode[0] ? cfg->gain_mode : "unchanged");
+    if (cfg->rx_gain_db >= 0.0)
+        printf(", rx_gain_db=%.2f", cfg->rx_gain_db);
+    printf("\n");
     return 0;
 }
 
@@ -420,6 +494,122 @@ static int stream_iq(FILE *src, const struct stream_cfg *cfg, unsigned actual_ra
     return 0;
 }
 
+static void spi_send_tlv_iq_packet(const int16_t *iq, unsigned samples)
+{
+    unsigned len = samples * 4;
+
+    spi_select();
+    spi_send_byte(0x00); /* TYPE = TLV_IQ */
+    spi_send_byte((uint8_t)((len >> 8) & 0xff));
+    spi_send_byte((uint8_t)(len & 0xff));
+    for (unsigned n = 0; n < samples; n++)
+        spi_send_iq(iq[2 * n], iq[2 * n + 1]);
+    spi_deselect();
+}
+
+static int stream_tlv_iq(FILE *src, const struct stream_cfg *cfg, unsigned actual_rate)
+{
+    int16_t *buf;
+    int16_t *pkt;
+    size_t words_per_read = (size_t)cfg->iio_buf * 2;
+    unsigned spp = cfg->chunk_samples ? cfg->chunk_samples : 256;
+    unsigned pkt_used = 0;
+    unsigned long long total = 0;
+    unsigned long long input_total = 0;
+    unsigned phase = 0;
+    unsigned out_rate = cfg->sample_rate;
+    unsigned in_rate = actual_rate;
+    int32_t dc_i = 0;
+    int32_t dc_q = 0;
+    struct timeval t0, t1;
+
+    if (spp > 4096)
+        spp = 4096; /* keep packets comfortably below the 16-bit TLV length limit */
+    if (words_per_read < (size_t)spp * 2)
+        words_per_read = (size_t)spp * 2;
+
+    buf = malloc(words_per_read * sizeof(int16_t));
+    pkt = malloc((size_t)spp * 2 * sizeof(int16_t));
+    if (!buf || !pkt) {
+        perror("malloc");
+        free(buf);
+        free(pkt);
+        return -1;
+    }
+
+    gettimeofday(&t0, NULL);
+
+    printf("Live TLV stream: output_rate=%u Hz, %u samples/packet, iq_shift=%u, dc_block=%s\n",
+           out_rate ? out_rate : in_rate, spp, cfg->iq_shift,
+           cfg->dc_block ? "on" : "off");
+
+    while (keep_running) {
+        size_t got = fread(buf, sizeof(int16_t), words_per_read, src);
+        if (got == 0)
+            break;
+
+        got &= ~(size_t)1;
+
+        for (size_t n = 0; n < got; n += 2) {
+            int32_t raw_i = buf[n];
+            int32_t raw_q = buf[n + 1];
+            int send_sample = 1;
+
+            input_total++;
+
+            if (cfg->dc_block) {
+                dc_i += (raw_i - dc_i) >> cfg->dc_shift;
+                dc_q += (raw_q - dc_q) >> cfg->dc_shift;
+                raw_i -= dc_i;
+                raw_q -= dc_q;
+            }
+
+            if (out_rate != 0 && in_rate != 0 && out_rate < in_rate) {
+                phase += out_rate;
+                if (phase >= in_rate) {
+                    phase -= in_rate;
+                    send_sample = 1;
+                } else {
+                    send_sample = 0;
+                }
+            }
+
+            if (!send_sample)
+                continue;
+
+            pkt[2 * pkt_used] = scale_iio_sample(raw_i, cfg->iq_shift);
+            pkt[2 * pkt_used + 1] = scale_iio_sample(raw_q, cfg->iq_shift);
+            pkt_used++;
+            total++;
+
+            if (pkt_used == spp) {
+                if (!cfg->dry_run)
+                    spi_send_tlv_iq_packet(pkt, pkt_used);
+                pkt_used = 0;
+                pace_samples(total, out_rate ? out_rate : in_rate, &t0);
+            }
+        }
+
+        if (got < words_per_read)
+            break;
+    }
+
+    if (pkt_used && !cfg->dry_run)
+        spi_send_tlv_iq_packet(pkt, pkt_used);
+
+    gettimeofday(&t1, NULL);
+    double elapsed = (double)(t1.tv_sec - t0.tv_sec) +
+                     (double)(t1.tv_usec - t0.tv_usec) / 1000000.0;
+    double rate = elapsed > 0.0 ? (double)total / elapsed : 0.0;
+
+    printf("Read %llu IQ samples, streamed %llu as TLV in %.3f s (%.0f samples/s)\n",
+           input_total, total, elapsed, rate);
+
+    free(buf);
+    free(pkt);
+    return 0;
+}
+
 static int stream_synth_fm(const struct stream_cfg *cfg)
 {
     unsigned rate = cfg->sample_rate ? cfg->sample_rate : 1000000;
@@ -564,8 +754,8 @@ static int stream_tlv_test(const struct stream_cfg *cfg)
     unsigned spp = cfg->chunk_samples ? cfg->chunk_samples : 64;
     struct timeval t0, t1;
 
-    if (spp > 256)
-        spp = 256;   /* keep LEN <= 1024 bytes and packets a sane size */
+    if (spp > 4096)
+        spp = 4096;  /* keep packets comfortably below the 16-bit TLV length limit */
 
     gettimeofday(&t0, NULL);
     printf("TLV test: %u IQ samples/packet, image+object injected every 16 pkts\n", spp);
@@ -643,8 +833,8 @@ static int stream_tlv_fm(const struct stream_cfg *cfg)
     double amp = cfg->synth_amp, dev_hz = cfg->synth_dev_hz;
     struct timeval t0, t1;
 
-    if (spp > 256)
-        spp = 256;   /* keep LEN <= 1024 bytes per packet */
+    if (spp > 4096)
+        spp = 4096;  /* keep packets comfortably below the 16-bit TLV length limit */
 
     gettimeofday(&t0, NULL);
     printf("TLV synth-FM: %u samples/packet, rate=%u Hz, dev=%u Hz\n",
@@ -689,6 +879,7 @@ static int stream_tlv_fm(const struct stream_cfg *cfg)
             spi_deselect();
         if (cfg->word_delay_us)
             usleep(cfg->word_delay_us);
+        pace_samples(total, rate, &t0);
     }
 
     gettimeofday(&t1, NULL);
@@ -709,10 +900,13 @@ static void usage(const char *prog)
     printf("  --mode synth-tone      Stream a strong generated IQ tone\n");
     printf("  --mode tlv-test        Stream a counter in TLV_IQ packets (TLV functional test)\n");
     printf("  --mode tlv-fm          Stream synthetic FM IQ in TLV_IQ packets (FM-over-TLV)\n");
+    printf("  --mode tlv-radio       Stream live FM IQ in TLV_IQ packets\n");
     printf("  --freq-mhz FREQ        RF frequency in MHz (default 95.1)\n");
     printf("  --adc-rate HZ          AD9361 sample rate; 0 tries fallbacks (default 0)\n");
     printf("  --rate HZ              Output IQ rate to FPGA; 0 uses ADC rate (default 1000000)\n");
     printf("  --rf-bw HZ             AD9361 RF bandwidth (default 1000000)\n");
+    printf("  --gain-mode MODE       AD9361 gain mode: slow_attack, fast_attack, manual\n");
+    printf("  --rx-gain-db DB        Manual RX hardware gain in dB, used with --gain-mode manual\n");
     printf("  --duration SEC         Run length; 0 means until Ctrl-C (default 0)\n");
     printf("  --iio-buf N            iio_readdev buffer size (default 8192)\n");
     printf("  --chunk-samples N      Processing chunk size in IQ samples (default 1024)\n");
@@ -741,6 +935,8 @@ static int parse_args(int argc, char **argv, struct stream_cfg *cfg)
     cfg->iq_shift = 4;
     cfg->dc_shift = 12;
     cfg->word_delay_us = 0;
+    cfg->rx_gain_db = -1.0;
+    snprintf(cfg->gain_mode, sizeof(cfg->gain_mode), "%s", "slow_attack");
     cfg->dry_run = 0;
     cfg->per_word_cs = 0;
     cfg->dc_block = 1;
@@ -758,6 +954,8 @@ static int parse_args(int argc, char **argv, struct stream_cfg *cfg)
                 cfg->mode = MODE_TLV_TEST;
             else if (strcmp(argv[i], "tlv-fm") == 0)
                 cfg->mode = MODE_TLV_FM;
+            else if (strcmp(argv[i], "tlv-radio") == 0)
+                cfg->mode = MODE_TLV_RADIO;
             else {
                 fprintf(stderr, "unsupported mode: %s\n", argv[i]);
                 return -1;
@@ -770,6 +968,10 @@ static int parse_args(int argc, char **argv, struct stream_cfg *cfg)
             cfg->adc_rate = (unsigned)strtoul(argv[++i], NULL, 0);
         } else if (strcmp(argv[i], "--rf-bw") == 0 && i + 1 < argc) {
             cfg->rf_bw = (unsigned)strtoul(argv[++i], NULL, 0);
+        } else if (strcmp(argv[i], "--gain-mode") == 0 && i + 1 < argc) {
+            snprintf(cfg->gain_mode, sizeof(cfg->gain_mode), "%s", argv[++i]);
+        } else if (strcmp(argv[i], "--rx-gain-db") == 0 && i + 1 < argc) {
+            cfg->rx_gain_db = atof(argv[++i]);
         } else if (strcmp(argv[i], "--duration") == 0 && i + 1 < argc) {
             cfg->duration_sec = (unsigned)strtoul(argv[++i], NULL, 0);
         } else if (strcmp(argv[i], "--iio-buf") == 0 && i + 1 < argc) {
@@ -833,7 +1035,7 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    if (cfg.mode == MODE_FM) {
+    if (cfg.mode == MODE_FM || cfg.mode == MODE_TLV_RADIO) {
         if (configure_fm(&cfg, &actual_rate) != 0)
             return 1;
     } else if (cfg.mode == MODE_SYNTH_FM || cfg.mode == MODE_SYNTH_TONE ||
@@ -877,7 +1079,10 @@ int main(int argc, char **argv)
             goto out;
         }
 
-        ret = stream_iq(iq, &cfg, actual_rate) == 0 ? 0 : 1;
+        if (cfg.mode == MODE_TLV_RADIO)
+            ret = stream_tlv_iq(iq, &cfg, actual_rate) == 0 ? 0 : 1;
+        else
+            ret = stream_iq(iq, &cfg, actual_rate) == 0 ? 0 : 1;
     }
 
 out:

@@ -1,15 +1,18 @@
 module top #(
     parameter AUDIO_TEST_TONE = 0,
     parameter FM_CHAIN_TEST = 0,
-    parameter FM_CIC_R = 32,
-    parameter IQ_PACED = 0,
-    parameter IQ_SAMPLE_RATE = 349_000,
-    parameter IQ_FIFO_DEPTH = 16,
+    parameter FM_CIC_R = 8,
+    parameter IQ_SAMPLE_RATE = 260_417,
+    parameter IQ_FIFO_DEPTH = 8192,
+    parameter IQ_PREROLL_SAMPLES = 4096,
     parameter USE_TLV = 0,           // 0 = raw-IQ link (default), 1 = TLV-framed link
-    parameter BYTE_FIFO_DEPTH = 32,  // TLV byte CDC FIFO depth (spi_clk -> CLK)
-    parameter I2S_AUDIO_RATE = 29_900, // LRCLK target for i2s_tx NCO.
-                                      // Pluto 2.5 MHz ADC, 10:1 sw decim -> ~239200 Hz IQ to FPGA.
-                                      // Audio rate = IQ/FM_CIC_R = 239200/8 = 29900 Hz.
+    parameter BYTE_FIFO_DEPTH = 4096, // TLV byte CDC FIFO depth (spi_clk -> CLK)
+    parameter I2S_AUDIO_RATE = 32_552, // LRCLK target for i2s_tx.
+                                      // Pluto 2.60417 MHz ADC, 10:1 sw decim -> 260.417 kS/s IQ.
+                                      // Audio rate = IQ/FM_CIC_R = 32.552 kHz.
+    parameter I2S_BCLK_HALF_CYCLES = 6,
+    parameter AUDIO_WARMUP_SAMPLES = 512,
+    parameter WF_ROWS = 240,
     parameter CLK_HZ = 25_000_000
 )(
     input logic CLK,
@@ -178,6 +181,8 @@ logic        fifo_pop;
 logic        fifo_pop_d;
 logic        iq_sample_tick;
 logic [31:0] iq_rate_acc;
+logic        iq_started;
+logic [$clog2(IQ_PREROLL_SAMPLES+1)-1:0] iq_preroll_cnt;
 
 // Source-side hookup for the shared IQ FIFO (driven by the selected branch).
 logic        iqsrc_wclk;
@@ -353,7 +358,21 @@ always_ff @(posedge CLK) begin
     end
 end
 
-assign fifo_pop = IQ_PACED ? (iq_sample_tick && ~fifo_empty) : ~fifo_empty;
+always_ff @(posedge CLK or posedge sys_rst) begin
+    if (sys_rst) begin
+        iq_started <= 1'b0;
+        iq_preroll_cnt <= '0;
+    end else if (FM_CHAIN_TEST) begin
+        iq_started <= 1'b1;
+    end else if (!iq_started && !fifo_empty && iq_sample_tick) begin
+        if (iq_preroll_cnt == IQ_PREROLL_SAMPLES[$bits(iq_preroll_cnt)-1:0])
+            iq_started <= 1'b1;
+        else
+            iq_preroll_cnt <= iq_preroll_cnt + 1'b1;
+    end
+end
+
+assign fifo_pop = (!FM_CHAIN_TEST) && iq_started && iq_sample_tick && ~fifo_empty;
 
 always_ff @(posedge CLK) begin
     if (sys_rst)
@@ -522,7 +541,7 @@ logic [8:0] wf_row_age_req;
 logic [7:0] wf_magnitude;
 logic [8:0] wf_write_row;
 
-waterfall_buf #(.BINS(256), .ROWS(360)) u_wf (
+waterfall_buf #(.BINS(256), .ROWS(WF_ROWS)) u_wf (
     .clk (CLK),
     .wr_magnitude (wf_wr_magnitude),
     .wr_valid (wf_wr_valid),
@@ -694,30 +713,58 @@ fm_demod u_fm (
     .audio_valid (audio_raw_valid)
 );
 
-// FM_CIC_R:1 audio decimator - averages FM_CIC_R samples to produce audio
-// at IQ_rate/FM_CIC_R Hz, matching the I2S rate set by I2S_AUDIO_RATE.
-// FM_CIC_R must be a power of two (8 for SPI modes, 32 for FM_CHAIN_TEST).
+// FM_CIC_R:1 audio decimator. The 3-stage CIC gives the discriminator output
+// enough stop-band rejection before it is reduced to the I2S playback rate.
 localparam int AUD_SHIFT = $clog2(FM_CIC_R);
+localparam int AUD_STAGES = 3;
+localparam int AUD_W = 16 + AUD_STAGES * AUD_SHIFT + 2;
+localparam int AUD_GAIN_SHIFT = AUD_STAGES * AUD_SHIFT;
+localparam logic signed [AUD_W-1:0] AUD_MAX = {{(AUD_W-16){1'b0}}, 16'sd32767};
+localparam logic signed [AUD_W-1:0] AUD_MIN = {{(AUD_W-16){1'b1}}, -16'sd32768};
+
 logic signed [15:0] audio_sample;
 logic audio_valid;
 logic [AUD_SHIFT-1:0] aud_dec_cnt;
-logic signed [AUD_SHIFT+16-1:0] aud_acc;
+logic signed [AUD_W-1:0] aud_integ [0:AUD_STAGES-1];
+logic signed [AUD_W-1:0] aud_comb  [0:AUD_STAGES-1];
+logic signed [AUD_W-1:0] aud_prev  [0:AUD_STAGES-1];
+logic signed [AUD_W-1:0] aud_decim;
+logic signed [AUD_W-1:0] aud_scaled;
 
 always_ff @(posedge CLK or posedge sys_rst) begin
     if (sys_rst) begin
         aud_dec_cnt <= '0;
-        aud_acc <= '0;
+        aud_decim <= '0;
+        aud_scaled <= '0;
+        for (int k = 0; k < AUD_STAGES; k++) begin
+            aud_integ[k] <= '0;
+            aud_comb[k] <= '0;
+            aud_prev[k] <= '0;
+        end
         audio_sample <= '0;
         audio_valid <= 1'b0;
     end else begin
         audio_valid <= 1'b0;
         if (audio_raw_valid) begin
+            aud_integ[0] <= aud_integ[0] + {{(AUD_W-16){audio_raw[15]}}, audio_raw};
+            for (int k = 1; k < AUD_STAGES; k++)
+                aud_integ[k] <= aud_integ[k] + aud_integ[k-1];
+
             if (&aud_dec_cnt) begin
-                audio_sample <= (aud_acc + {{(AUD_SHIFT){audio_raw[15]}}, audio_raw}) >>> AUD_SHIFT;
+                aud_decim <= aud_integ[AUD_STAGES-1];
+
+                aud_comb[0] <= aud_decim - aud_prev[0];
+                aud_prev[0] <= aud_decim;
+                for (int k = 1; k < AUD_STAGES; k++) begin
+                    aud_comb[k] <= aud_comb[k-1] - aud_prev[k];
+                    aud_prev[k] <= aud_comb[k-1];
+                end
+
+                aud_scaled <= aud_comb[AUD_STAGES-1] >>> AUD_GAIN_SHIFT;
+                if      (aud_scaled > AUD_MAX) audio_sample <= 16'sd32767;
+                else if (aud_scaled < AUD_MIN) audio_sample <= -16'sd32768;
+                else                           audio_sample <= aud_scaled[15:0];
                 audio_valid <= 1'b1;
-                aud_acc <= '0;
-            end else begin
-                aud_acc <= aud_acc + {{(AUD_SHIFT){audio_raw[15]}}, audio_raw};
             end
             aud_dec_cnt <= aud_dec_cnt + 1'b1;
         end
@@ -730,6 +777,8 @@ logic signed [15:0] audio_to_i2s;
 logic signed [15:0] tone_sample;
 logic [4:0] tone_phase;
 logic i2s_sample_req;
+logic audio_warm;
+logic [$clog2(AUDIO_WARMUP_SAMPLES+1)-1:0] audio_warm_cnt;
 
 audio_volume u_audio_volume (
     .audio_in (audio_sample),
@@ -738,6 +787,18 @@ audio_volume u_audio_volume (
     .enable (fm_active),
     .audio_out (audio_sample_16)
 );
+
+always_ff @(posedge CLK or posedge sys_rst) begin
+    if (sys_rst) begin
+        audio_warm <= 1'b0;
+        audio_warm_cnt <= '0;
+    end else if (audio_valid && fm_active && !audio_warm) begin
+        if (audio_warm_cnt == AUDIO_WARMUP_SAMPLES[$bits(audio_warm_cnt)-1:0])
+            audio_warm <= 1'b1;
+        else
+            audio_warm_cnt <= audio_warm_cnt + 1'b1;
+    end
+end
 
 always_ff @(posedge CLK or posedge sys_rst) begin
     if (sys_rst) begin
@@ -782,12 +843,9 @@ always_ff @(posedge CLK or posedge sys_rst) begin
     end
 end
 
-// ---- Elastic audio FIFO: decouple the bursty fm_demod output rate from the
-// fixed I2S playback rate, with skip/repeat rate adaptation (audio_fifo.sv).
-// Without it the DAC under/over-samples the demod stream -> distortion. ----
+// Audio FIFO: preroll to half-full, then consume one sample per I2S frame.
+// This keeps the DAC clock stable and avoids audible skip/repeat correction.
 localparam int AFIFO_DEPTH = 64;
-localparam int AFIFO_LOW   = AFIFO_DEPTH * 7 / 16;  // below -> repeat (hold) to refill
-localparam int AFIFO_HIGH  = AFIFO_DEPTH * 9 / 16;  // above -> skip one to catch up
 
 logic [15:0] afifo_rdata;
 logic        afifo_empty, afifo_full;
@@ -796,29 +854,13 @@ logic [1:0]  afifo_pop_n;
 logic [15:0] audio_held;
 logic        i2s_sample_req_d;
 wire         sample_req_edge = i2s_sample_req & ~i2s_sample_req_d;
-
-// Fix B: rate-limit skips so corrections are spread in time rather than clustered.
-// At 43403 Hz I2S and ~178 excess audio samples/sec, one skip per 200 frames
-// (4.6 ms) keeps the buffer balanced while preventing audible burst artifacts.
-localparam int SKIP_GAP = 200;
-logic [$clog2(SKIP_GAP+1)-1:0] skip_cooldown;
-
-always_ff @(posedge CLK or posedge sys_rst) begin
-    if (sys_rst)
-        skip_cooldown <= '0;
-    else if (sample_req_edge) begin
-        if (skip_cooldown > 0)
-            skip_cooldown <= skip_cooldown - 1'b1;
-        else if (afifo_count >= AFIFO_HIGH)
-            skip_cooldown <= SKIP_GAP[$bits(skip_cooldown)-1:0];
-    end
-end
+logic        audio_started;
 
 audio_fifo #(.WIDTH(16), .DEPTH(AFIFO_DEPTH)) u_afifo (
     .clk    (CLK),
     .rst    (sys_rst),
     .wdata  (audio_sample_16),
-    .wpush  (audio_valid & fm_active & ~afifo_full),
+    .wpush  (audio_valid & fm_active & audio_warm & ~afifo_full),
     .full   (afifo_full),
     .rdata  (afifo_rdata),
     .rpop_n (afifo_pop_n),
@@ -831,27 +873,29 @@ always_ff @(posedge CLK or posedge sys_rst) begin
     else         i2s_sample_req_d <= i2s_sample_req;
 end
 
-// One sample consumed per I2S frame; advance 0/1/2 to keep the buffer centered.
-always_comb begin
-    afifo_pop_n = 2'd0;
-    if (sample_req_edge) begin
-        if      (afifo_count <= AFIFO_LOW)                             afifo_pop_n = 2'd0;
-        else if (afifo_count >= AFIFO_HIGH && skip_cooldown == '0)     afifo_pop_n = 2'd2;
-        else                                                           afifo_pop_n = 2'd1;
-    end
+always_ff @(posedge CLK or posedge sys_rst) begin
+    if (sys_rst)
+        audio_started <= 1'b0;
+    else if (afifo_count >= (AFIFO_DEPTH / 2))
+        audio_started <= 1'b1;
 end
 
-// Hold the last valid sample so a brief underrun repeats it cleanly.
+assign afifo_pop_n = (audio_started && sample_req_edge && !afifo_empty) ? 2'd1 : 2'd0;
+
 always_ff @(posedge CLK or posedge sys_rst) begin
     if (sys_rst)           audio_held <= '0;
     else if (~afifo_empty) audio_held <= afifo_rdata;
 end
 
-wire signed [15:0] audio_play = afifo_empty ? audio_held : afifo_rdata;
+wire signed [15:0] audio_play = (!audio_started || afifo_empty) ? audio_held : afifo_rdata;
 
 assign audio_to_i2s = AUDIO_TEST_TONE ? tone_sample : audio_play;
 
-i2s_tx #(.AUDIO_RATE(I2S_AUDIO_RATE), .CLK_HZ(CLK_HZ)) u_i2s (
+i2s_tx #(
+    .AUDIO_RATE(I2S_AUDIO_RATE),
+    .CLK_HZ(CLK_HZ),
+    .BCLK_HALF_CYCLES(I2S_BCLK_HALF_CYCLES)
+) u_i2s (
     .clk (CLK),
     .rst (sys_rst),
     .left_in (audio_to_i2s),
@@ -863,7 +907,7 @@ i2s_tx #(.AUDIO_RATE(I2S_AUDIO_RATE), .CLK_HZ(CLK_HZ)) u_i2s (
 );
 
 // LCD controller
-lcd u_lcd (
+lcd #(.WF_ROWS(WF_ROWS)) u_lcd (
     .rst (sys_rst),
     .pclk (clk_pix),
     .mode (mode),

@@ -47,9 +47,9 @@ prog: build/$(TOP).bit
 
 # FM build that consumes the TLV-framed IQ link (USE_TLV=1). Same top, selected
 # by parameter; the default `prog` stays raw-IQ. Pair with the Pluto sending
-# TLV_IQ packets (icesugar_stream --mode tlv-fm).
+# TLV_IQ packets (icesugar_stream --mode tlv-radio or --mode tlv-fm).
 build/tlv.bit: $(SV_SRCS) $(LPF) build/font_8x16.mem | build
-	yosys -p "chparam -set USE_TLV 1 top; synth_ecp5 -top $(TOP) -json build/tlv.json" $(SV_SRCS)
+	yosys -p "chparam -set USE_TLV 1 -set FM_CIC_R 8 -set IQ_FIFO_DEPTH $(FM_AUDIO_IQ_FIFO_DEPTH) -set IQ_PREROLL_SAMPLES $(FM_AUDIO_IQ_PREROLL) -set IQ_SAMPLE_RATE $(FM_AUDIO_IQ_RATE) -set BYTE_FIFO_DEPTH $(FM_AUDIO_BYTE_FIFO_DEPTH) -set I2S_AUDIO_RATE $(FM_AUDIO_I2S_RATE) -set I2S_BCLK_HALF_CYCLES $(FM_AUDIO_BCLK_HALF) -set AUDIO_WARMUP_SAMPLES $(FM_AUDIO_WARMUP) top; synth_ecp5 -top $(TOP) -json build/tlv.json" $(SV_SRCS)
 	nextpnr-ecp5 $(DEVICE) --json build/tlv.json --textcfg build/tlv.cfg --lpf $(LPF) --freq 25
 	ecppack build/tlv.cfg $@
 
@@ -94,6 +94,8 @@ FM_AUDIO_I2S_RATE      = 32552
 FM_AUDIO_BCLK_HALF     = 6
 FM_AUDIO_IQ_FIFO_DEPTH = 8192
 FM_AUDIO_IQ_PREROLL    = 4096
+FM_AUDIO_BYTE_FIFO_DEPTH = 4096
+FM_AUDIO_WARMUP        = 512
 
 FM_AUDIO_TEST_SRCS = tests/fm_audio_test_top.sv \
                      src/spi_iq_slave.sv \

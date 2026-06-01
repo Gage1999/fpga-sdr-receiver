@@ -378,7 +378,7 @@ Per-word CS is reliable for wiring/debug, but it is too slow for clean FM audio.
 
 ## 15. Live FM Test Starting Point
 
-Live FM uses the same iCeSugar build:
+Standalone live FM uses the minimal audio build:
 
 ```powershell
 cd icesugar_pro
@@ -399,6 +399,19 @@ Notes:
 - Use `make stream-run STREAM_ARGS="..."` only when you need to override IQ
   shift, DC removal, bandwidth, or duration manually.
 
+For the integrated main project with TLV-framed IQ, use:
+
+```powershell
+cd icesugar_pro
+make prog_tlv
+
+cd ..\plutosky
+make tlv-radio-run FREQ_MHZ=95.1
+```
+
+This path keeps the same audio timing as `prog_fm_audio_test`, but sends live
+IQ as TLV_IQ packets through `spi_frame_rx -> tlv_demux -> tlv_iq_sink`.
+
 ---
 
 ## 16. Known Current Limitations
@@ -406,6 +419,8 @@ Notes:
 - JP5 SPI is currently about 12.5 MHz.
 - Jumper-wire signal integrity matters. Keep SCK, MOSI, CS, and GND short.
 - Per-word CS is too slow for audio-rate FM.
-- The standalone FM audio bitstream relies on a large FPGA IQ FIFO/preroll to
-  absorb Pluto/Linux userspace timing jitter.
+- The FM audio path relies on a large FPGA IQ FIFO/preroll to absorb
+  Pluto/Linux userspace timing jitter.
+- The integrated TLV build keeps the audio FIFO depth and reduces waterfall
+  history to fit the 25k device block-RAM budget.
 

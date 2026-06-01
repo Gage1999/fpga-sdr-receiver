@@ -1,4 +1,4 @@
-.PHONY: all test-build test-deploy test-run spi-reg-build spi-reg-deploy spi-reg-run stream-build stream-deploy stream-run stream-stop radio-run synth-fm-run clean
+.PHONY: all test-build test-deploy test-run spi-reg-build spi-reg-deploy spi-reg-run stream-build stream-deploy stream-run stream-stop radio-run tlv-radio-run synth-fm-run tlv-synth-fm-run clean
 
 CROSS   = C:/Xilinx/Vitis/2022.1/gnu/aarch32/nt/gcc-arm-linux-gnueabi/bin/arm-linux-gnueabihf-gcc
 PLUTO   ?= 192.168.2.1
@@ -21,6 +21,10 @@ FREQ_MHZ    ?= 95.1
 FM_AUDIO_IQ_RATE  ?= 260417
 FM_AUDIO_ADC_RATE ?= 2604170
 FM_AUDIO_CHUNK    ?= 1024
+FM_AUDIO_TLV_CHUNK ?= 4096
+FM_AUDIO_RF_BW    ?= 1000000
+FM_AUDIO_GAIN_MODE ?= slow_attack
+FM_AUDIO_IQ_SHIFT ?= 4
 
 all: test-build
 
@@ -72,13 +76,21 @@ stream-stop:
 #   IQ rate ~= 260.417 kSPS, FM_CIC_R=8 -> 32.552 kHz I2S.
 # The ADC rate is 10x the FPGA IQ rate so software decimation is uniform.
 radio-run: stream-deploy
-	MSYS_NO_PATHCONV=1 $(SSH) '/root/icesugar_stream --mode fm --freq-mhz $(FREQ_MHZ) --adc-rate $(FM_AUDIO_ADC_RATE) --rate $(FM_AUDIO_IQ_RATE) --chunk-samples $(FM_AUDIO_CHUNK) --dc-shift 12'
+	MSYS_NO_PATHCONV=1 $(SSH) '/root/icesugar_stream --mode fm --freq-mhz $(FREQ_MHZ) --adc-rate $(FM_AUDIO_ADC_RATE) --rate $(FM_AUDIO_IQ_RATE) --chunk-samples $(FM_AUDIO_CHUNK) --rf-bw $(FM_AUDIO_RF_BW) --gain-mode $(FM_AUDIO_GAIN_MODE) --iq-shift $(FM_AUDIO_IQ_SHIFT) --dc-shift 12'
+
+# Live FM radio using TLV_IQ packets. Pair with `make prog_tlv` in icesugar_pro/.
+tlv-radio-run: stream-deploy
+	MSYS_NO_PATHCONV=1 $(SSH) '/root/icesugar_stream --mode tlv-radio --freq-mhz $(FREQ_MHZ) --adc-rate $(FM_AUDIO_ADC_RATE) --rate $(FM_AUDIO_IQ_RATE) --chunk-samples $(FM_AUDIO_TLV_CHUNK) --rf-bw $(FM_AUDIO_RF_BW) --gain-mode $(FM_AUDIO_GAIN_MODE) --iq-shift $(FM_AUDIO_IQ_SHIFT) --dc-shift 12'
 
 # Synthetic FM through the same Pluto->FPGA SPI path. If this is clean but
 # radio-run buzzes, the artifact is coming from live RF/IIO samples rather than
 # the FPGA I2S/DAC path.
 synth-fm-run: stream-deploy
 	MSYS_NO_PATHCONV=1 $(SSH) '/root/icesugar_stream --mode synth-fm --rate $(FM_AUDIO_IQ_RATE) --chunk-samples 128 --synth-amp 8000 --synth-dev 5000'
+
+# Synthetic FM wrapped in TLV_IQ packets. Pair with `make prog_tlv`.
+tlv-synth-fm-run: stream-deploy
+	MSYS_NO_PATHCONV=1 $(SSH) '/root/icesugar_stream --mode tlv-fm --rate $(FM_AUDIO_IQ_RATE) --chunk-samples $(FM_AUDIO_TLV_CHUNK) --synth-amp 8000 --synth-dev 5000'
 
 build:
 	mkdir -p build
