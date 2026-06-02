@@ -8,7 +8,8 @@
         sim_integration sim_spi_frame_rx sim_tlv_demux sim_tlv sim_tlv_all
 
 SV_SRCS = src/top.sv \
-          src/spi_cmd_slave.sv \
+          src/spi_ui_cmd_rx.sv \
+          src/spi_backchannel.sv \
           src/control_regs.sv \
           src/audio_volume.sv \
           src/spi_iq_slave.sv \
@@ -162,53 +163,53 @@ sim_fft: tb/tb_fft256.sv src/fft256.sv src/butterfly.sv src/twiddle_rom.sv | bui
 	iverilog -g2012 -o build/fft256.sim $^
 	vvp build/fft256.sim
 
-sim_sdram: tests/sdram_ctrl_tb.sv src/sdram_ctrl.sv | build
-	iverilog -g2012 -o build/sdram_ctrl.sim tests/sdram_ctrl_tb.sv src/sdram_ctrl.sv
+sim_sdram: tb/sdram_ctrl_tb.sv src/sdram_ctrl.sv | build
+	iverilog -g2012 -o build/sdram_ctrl.sim tb/sdram_ctrl_tb.sv src/sdram_ctrl.sv
 	vvp build/sdram_ctrl.sim
 
-sim_sdram_bl: tests/sdram_ctrl_bl_tb.sv src/sdram_ctrl.sv | build
-	iverilog -g2012 -o build/sdram_ctrl_bl.sim tests/sdram_ctrl_bl_tb.sv src/sdram_ctrl.sv
+sim_sdram_bl: tb/sdram_ctrl_bl_tb.sv src/sdram_ctrl.sv | build
+	iverilog -g2012 -o build/sdram_ctrl_bl.sim tb/sdram_ctrl_bl_tb.sv src/sdram_ctrl.sv
 	vvp build/sdram_ctrl_bl.sim
 
 SDRAM_WF_SRCS = src/top_sdram_wf.sv src/sdram_ctrl.sv src/sdram_arb.sv src/scan_out.sv \
                 src/compositor.sv src/line_cache.sv src/scan_timing.sv src/async_fifo.sv
-sim_sdram_wf: tests/sdram_wf_tb.sv $(SDRAM_WF_SRCS) | build
-	iverilog -g2012 -DSIMULATION -o build/sdram_wf.sim tests/sdram_wf_tb.sv $(SDRAM_WF_SRCS)
+sim_sdram_wf: tb/sdram_wf_tb.sv $(SDRAM_WF_SRCS) | build
+	iverilog -g2012 -DSIMULATION -o build/sdram_wf.sim tb/sdram_wf_tb.sv $(SDRAM_WF_SRCS)
 	vvp build/sdram_wf.sim
 
-sim_line_cache: tests/line_cache_tb.sv src/line_cache.sv | build
-	iverilog -g2012 -o build/line_cache.sim tests/line_cache_tb.sv src/line_cache.sv
+sim_line_cache: tb/line_cache_tb.sv src/line_cache.sv | build
+	iverilog -g2012 -o build/line_cache.sim tb/line_cache_tb.sv src/line_cache.sv
 	vvp build/line_cache.sim
 
-sim_scan_out: tests/scan_out_tb.sv src/scan_out.sv src/sdram_ctrl.sv src/line_cache.sv | build
-	iverilog -g2012 -o build/scan_out.sim tests/scan_out_tb.sv src/scan_out.sv src/sdram_ctrl.sv src/line_cache.sv
+sim_scan_out: tb/scan_out_tb.sv src/scan_out.sv src/sdram_ctrl.sv src/line_cache.sv | build
+	iverilog -g2012 -o build/scan_out.sim tb/scan_out_tb.sv src/scan_out.sv src/sdram_ctrl.sv src/line_cache.sv
 	vvp build/scan_out.sim
 
-sim_arb: tests/sdram_arb_tb.sv src/sdram_arb.sv | build
-	iverilog -g2012 -o build/sdram_arb.sim tests/sdram_arb_tb.sv src/sdram_arb.sv
+sim_arb: tb/sdram_arb_tb.sv src/sdram_arb.sv | build
+	iverilog -g2012 -o build/sdram_arb.sim tb/sdram_arb_tb.sv src/sdram_arb.sv
 	vvp build/sdram_arb.sim
 
-sim_compositor: tests/compositor_tb.sv src/compositor.sv src/sdram_ctrl.sv | build
-	iverilog -g2012 -o build/compositor.sim tests/compositor_tb.sv src/compositor.sv src/sdram_ctrl.sv
+sim_compositor: tb/compositor_tb.sv src/compositor.sv src/sdram_ctrl.sv | build
+	iverilog -g2012 -o build/compositor.sim tb/compositor_tb.sv src/compositor.sv src/sdram_ctrl.sv
 	vvp build/compositor.sim
 
-sim_sdram_test: tests/sdram_test_top_tb.sv src/sdram_test_top.sv src/sdram_ctrl.sv | build
-	iverilog -g2012 -DSIMULATION -o build/sdram_test_top.sim tests/sdram_test_top_tb.sv src/sdram_test_top.sv src/sdram_ctrl.sv
+sim_sdram_test: tb/sdram_test_top_tb.sv src/sdram_test_top.sv src/sdram_ctrl.sv | build
+	iverilog -g2012 -DSIMULATION -o build/sdram_test_top.sim tb/sdram_test_top_tb.sv src/sdram_test_top.sv src/sdram_ctrl.sv
 	vvp build/sdram_test_top.sim
 
 # Run every SDRAM-integration sim
 sim_integration: sim_sdram sim_line_cache sim_scan_out sim_arb sim_compositor sim_sdram_test sim_sdram_wf
 
 # TLV receive-path unit sims (copied from the TLV bring-up)
-sim_spi_frame_rx: tests/spi_frame_rx_tb.sv src/spi_frame_rx.sv | build
+sim_spi_frame_rx: tb/spi_frame_rx_tb.sv src/spi_frame_rx.sv | build
 	iverilog -g2012 -o build/spi_frame_rx.sim $^
 	vvp build/spi_frame_rx.sim
 
-sim_tlv_demux: tests/tlv_demux_tb.sv src/tlv_demux.sv | build
+sim_tlv_demux: tb/tlv_demux_tb.sv src/tlv_demux.sv | build
 	iverilog -g2012 -o build/tlv_demux.sim $^
 	vvp build/tlv_demux.sim
 
-sim_tlv: tests/tlv_rx_tb.sv src/spi_frame_rx.sv src/async_fifo.sv src/tlv_demux.sv src/tlv_iq_sink.sv | build
+sim_tlv: tb/tlv_rx_tb.sv src/spi_frame_rx.sv src/async_fifo.sv src/tlv_demux.sv src/tlv_iq_sink.sv | build
 	iverilog -g2012 -o build/tlv_rx.sim $^
 	vvp build/tlv_rx.sim
 

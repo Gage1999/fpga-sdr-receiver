@@ -23,6 +23,13 @@ static void put_u16_le(uint8_t *out, uint16_t v) {
     out[1] = (uint8_t)((v >> 8) & 0xFFu);
 }
 
+static void put_u32_le(uint8_t *out, uint32_t v) {
+    out[0] = (uint8_t)(v & 0xFFu);
+    out[1] = (uint8_t)((v >> 8) & 0xFFu);
+    out[2] = (uint8_t)((v >> 16) & 0xFFu);
+    out[3] = (uint8_t)((v >> 24) & 0xFFu);
+}
+
 static uint16_t get_u16_le(const uint8_t *in) {
     return (uint16_t)((uint16_t)in[0] | ((uint16_t)in[1] << 8));
 }
@@ -105,6 +112,15 @@ size_t wire_pack_spectrum(uint8_t *out, size_t out_cap, const uint16_t bins[UI_S
     for (size_t i = 0; i < UI_SPECTRUM_BINS; i++) {
         put_u16_le(payload + i * 2, bins[i]);
     }
+    return finish_frame(out, pl);
+}
+
+size_t wire_pack_radio_command(uint8_t *out, size_t out_cap, uint8_t cmd, uint32_t arg) {
+    const uint16_t pl = 5;
+    if (out_cap < (size_t)pl + WIRE_OVERHEAD) return 0;
+    write_header(out, OP_RADIO_COMMAND, pl);
+    out[WIRE_HEADER_BYTES + 0] = cmd;
+    put_u32_le(out + WIRE_HEADER_BYTES + 1, arg);
     return finish_frame(out, pl);
 }
 

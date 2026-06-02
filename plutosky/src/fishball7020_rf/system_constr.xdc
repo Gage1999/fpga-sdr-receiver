@@ -91,13 +91,6 @@ set_property  -dict {PACKAGE_PIN  J20  IOSTANDARD LVCMOS18} [get_ports {gpio_ctl
 # JP5 AXI SPI master, Bank 13 (LVCMOS33, VCCO=3.3V)
 # =============================================================================
 
-# Signal integrity: these JP5 lines run to the iCESugar over loose jumper wires.
-# Fast/strong edges (DRIVE 12, default SLEW) ring and couple on an unterminated,
-# poorly-grounded jumper — which is why the link was sensitive to wire position.
-# At ~12.5 MHz SCK (80 ns period) there is enormous timing margin, so drive these
-# as weakly and slowly as possible: DRIVE 4 + SLEW SLOW softens the edges and
-# kills the ringing/double-clocking at the source. Pair this with a tight ground
-# return per signal and (ideally) a ~33 ohm series resistor at each pin.
 set_property  -dict {PACKAGE_PIN  V10  IOSTANDARD LVCMOS33  DRIVE 4  SLEW SLOW} [get_ports jp5_spi_clk]   ; ## JP5 pin 7
 set_property  -dict {PACKAGE_PIN  U9   IOSTANDARD LVCMOS33  DRIVE 4  SLEW SLOW} [get_ports jp5_spi_mosi]  ; ## JP5 pin 9
 set_property  -dict {PACKAGE_PIN  U10  IOSTANDARD LVCMOS33  PULLTYPE PULLDOWN} [get_ports jp5_spi_miso]  ; ## JP5 pin 11

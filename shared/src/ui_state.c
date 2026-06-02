@@ -16,7 +16,7 @@ void ui_state_default(ui_state_t *st) {
     st->demod         = (uint8_t)DEMOD_FM;
     st->layout        = ui_layout_for_demod((uint8_t)DEMOD_FM);
     st->volume        = 50;
-    st->freq_hz       = 100000000u;  // 100 MHz
+    st->freq_hz       = 95100000u;   // 95.1 MHz
     st->span_hz_log2  = 17;          // 128 kHz span
     st->squelch       = 20;
     st->flags         = 0;

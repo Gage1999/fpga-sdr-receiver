@@ -15,7 +15,14 @@ typedef enum : uint8_t {
     OP_TOUCH_EVENT    = 0x03u,
     OP_HEARTBEAT      = 0x04u,
     OP_SPECTRUM_BINS  = 0x05u,
+    OP_RADIO_COMMAND  = 0x06u,
 } wire_opcode_t;
+
+typedef enum : uint8_t {
+    RADIO_CMD_SET_MODE   = 0x01u,
+    RADIO_CMD_SET_VOLUME = 0x02u,
+    RADIO_CMD_SET_FREQ   = 0x03u,
+} radio_command_id_t;
 
 #define WIRE_HEADER_BYTES 4
 #define WIRE_TRAILER_BYTES 2
@@ -31,6 +38,7 @@ size_t wire_pack_partial(uint8_t *out, size_t out_cap,
 size_t wire_pack_touch(uint8_t *out, size_t out_cap, const touch_event_t *ev);
 size_t wire_pack_heartbeat(uint8_t *out, size_t out_cap);
 size_t wire_pack_spectrum(uint8_t *out, size_t out_cap, const uint16_t bins[UI_SPECTRUM_BINS]);
+size_t wire_pack_radio_command(uint8_t *out, size_t out_cap, uint8_t cmd, uint32_t arg);
 
 typedef enum {
     WIRE_OK             = 0,

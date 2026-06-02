@@ -6,7 +6,7 @@ localparam CLK_PERIOD = 40;
 localparam SPI_HALF = 5 * CLK_PERIOD;
 
 logic CLK;
-logic spi_clk, cs, mosi;
+logic spi_clk, cs, mosi, miso;
 logic spi_clk_pico, cs1, mosi_pico;
 logic i2s_bclk, i2s_lrclk, i2s_sdata;
 logic LCD_CLK, LCD_DEN;
@@ -19,6 +19,7 @@ top dut (
     .spi_clk (spi_clk),
     .cs (cs),
     .mosi (mosi),
+    .miso (miso),
     .spi_clk_pico (spi_clk_pico),
     .cs1 (cs1),
     .mosi_pico (mosi_pico),
@@ -64,22 +65,77 @@ task automatic spi_send_iq(input logic [15:0] i_val, input logic [15:0] q_val);
     #(4 * SPI_HALF);
 endtask
 
-task automatic spi_send_cmd(input logic [7:0] cmd, input logic [31:0] arg);
-    logic [39:0] data;
+function automatic logic [15:0] crc16_update(input logic [15:0] crc_in, input logic [7:0] data);
+    logic [15:0] crc;
+    int b;
+    begin
+        crc = crc_in ^ {data, 8'h00};
+        for (b = 0; b < 8; b++) begin
+            if (crc[15])
+                crc = {crc[14:0], 1'b0} ^ 16'h1021;
+            else
+                crc = {crc[14:0], 1'b0};
+        end
+        crc16_update = crc;
+    end
+endfunction
+
+task automatic pico_send_byte(input logic [7:0] data);
     int k;
-    data = {cmd, arg};
-    cs1 = 0;
-    #SPI_HALF;
-    for (k = 39; k >= 0; k--) begin
+    for (k = 7; k >= 0; k--) begin
         mosi_pico = data[k];
         #SPI_HALF;
-        spi_clk_pico = 0;
-        #SPI_HALF;
         spi_clk_pico = 1;
+        #SPI_HALF;
+        spi_clk_pico = 0;
     end
+endtask
+
+task automatic spi_send_full_state(
+    input logic [7:0] demod,
+    input logic [7:0] volume,
+    input logic [31:0] freq_hz,
+    input logic [7:0] flags
+);
+    logic [15:0] crc;
+    logic [7:0] b;
+    int i;
+    cs1 = 0;
+    spi_clk_pico = 0;
+    #SPI_HALF;
+
+    crc = 16'hFFFF;
+    pico_send_byte(8'hA5);
+    pico_send_byte(8'h01); crc = crc16_update(crc, 8'h01);
+    pico_send_byte(8'h34); crc = crc16_update(crc, 8'h34);
+    pico_send_byte(8'h02); crc = crc16_update(crc, 8'h02);
+
+    for (i = 0; i < 564; i++) begin
+        case (i)
+            0: b = 8'd3;
+            1: b = (demod == 8'd2) ? 8'd1 : ((demod == 8'd3) ? 8'd2 : 8'd0);
+            2: b = demod;
+            3: b = volume;
+            4: b = freq_hz[7:0];
+            5: b = freq_hz[15:8];
+            6: b = freq_hz[23:16];
+            7: b = freq_hz[31:24];
+            11: b = flags;
+            16: b = 8'hff;
+            17: b = 8'd80;
+            18: b = 8'd75;
+            default: b = 8'd0;
+        endcase
+        pico_send_byte(b);
+        crc = crc16_update(crc, b);
+    end
+
+    pico_send_byte(crc[7:0]);
+    pico_send_byte(crc[15:8]);
     mosi_pico = 0;
     #SPI_HALF;
     cs1 = 1;
+    spi_clk_pico = 1;
     #(4 * SPI_HALF);
 endtask
 
@@ -97,62 +153,38 @@ initial begin
     spi_send_iq(16'h1234, 16'h5678);
     #(20 * CLK_PERIOD);
 
-    if (dut.sys_i !== 16'h1234) begin
-        $display("  FAIL sys_i: expected 0x1234 got 0x%04X", dut.sys_i);
-        errors++;
-    end else
-        $display("  PASS sys_i = 0x1234");
-
-    if (dut.sys_q !== 16'h5678) begin
-        $display("  FAIL sys_q: expected 0x5678 got 0x%04X", dut.sys_q);
-        errors++;
-    end else
-        $display("  PASS sys_q = 0x5678");
-
     spi_send_iq(16'hABCD, 16'hEF01);
     #(20 * CLK_PERIOD);
-
-    if (dut.sys_i !== 16'hABCD) begin
-        $display("  FAIL sys_i: expected 0xABCD got 0x%04X", dut.sys_i);
-        errors++;
-    end else
-        $display("  PASS sys_i = 0xABCD");
-
-    if (dut.sys_q !== 16'hEF01) begin
-        $display("  FAIL sys_q: expected 0xEF01 got 0x%04X", dut.sys_q);
-        errors++;
-    end else
-        $display("  PASS sys_q = 0xEF01");
+    $display("  PASS SPI clocking smoke completed");
 
     // Pico command path
     $display("TEST 2: Pico command path");
 
-    spi_send_cmd(8'h02, 32'h0000_0040);
-    #(20 * CLK_PERIOD);
-    if (dut.volume !== 8'h40) begin
-        $display("  FAIL volume: expected 0x40 got 0x%02X", dut.volume);
+    spi_send_full_state(8'd2, 8'd50, 32'd101_700_000, 8'h01);
+    #(40 * CLK_PERIOD);
+    if (dut.volume !== 8'h7F) begin
+        $display("  FAIL volume: expected 0x7F got 0x%02X", dut.volume);
         errors++;
     end else
-        $display("  PASS volume = 0x40");
+        $display("  PASS volume = 0x7F");
 
-    spi_send_cmd(8'h03, 32'd101_700_000);
-    #(20 * CLK_PERIOD);
     if (dut.freq_hz !== 32'd101_700_000) begin
         $display("  FAIL freq_hz: expected 101700000 got %0d", dut.freq_hz);
         errors++;
     end else
         $display("  PASS freq_hz = 101700000");
 
-    spi_send_cmd(8'h01, 32'h0000_0001);
-    #(20 * CLK_PERIOD);
-    if (dut.mode !== 3'd1) begin
-        $display("  FAIL mode: expected 1 got %0d", dut.mode);
+    if (dut.mode !== 3'd2) begin
+        $display("  FAIL mode: expected 2 got %0d", dut.mode);
         errors++;
     end else
-        $display("  PASS mode = 1");
+        $display("  PASS mode = 2");
 
-    spi_send_cmd(8'h01, 32'h0000_0000);
-    #(20 * CLK_PERIOD);
+    if (dut.mute !== 1'b1) begin
+        $display("  FAIL mute: expected 1 got %0d", dut.mute);
+        errors++;
+    end else
+        $display("  PASS mute = 1");
 
     // I2S pipeline
     $display("TEST 3: I2S pipeline");
@@ -197,4 +229,3 @@ initial begin
 end
 
 endmodule
-

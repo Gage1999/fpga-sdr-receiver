@@ -86,6 +86,14 @@ static void set_demod(ui_logic_t *L, uint8_t demod) {
     L->curr.adsb_range_mi = adsb_range_clamp(L->curr.adsb_range_mi);
 }
 
+static uint8_t next_supported_demod(uint8_t demod) {
+    switch (demod) {
+    case DEMOD_FM:   return DEMOD_GOES;
+    case DEMOD_GOES: return DEMOD_ADSB;
+    default:         return DEMOD_FM;
+    }
+}
+
 // Frequency/span controls only make sense on the FM/AM spectrum page; the
 // image modes (GOES, ADS-B) ignore them.
 static int on_spectrum_page(const ui_logic_t *L) {
@@ -96,37 +104,59 @@ static int on_adsb_page(const ui_logic_t *L) {
     return L->curr.layout == LAYOUT_ADSB_FULL;
 }
 
+static const char *button_name(uint8_t btn) {
+    switch (btn) {
+    case UI_BTN_FREQ_UP:  return "freq_up";
+    case UI_BTN_FREQ_DN:  return "freq_dn";
+    case UI_BTN_VOL_UP:   return "vol_up";
+    case UI_BTN_VOL_DN:   return "vol_dn";
+    case UI_BTN_MODE:     return "mode";
+    case UI_BTN_MUTE:     return "mute";
+    case UI_BTN_ZOOM_IN:  return "zoom_in";
+    case UI_BTN_ZOOM_OUT: return "zoom_out";
+    default:              return "unknown";
+    }
+}
+
 static void action_button_press(ui_logic_t *L, uint8_t btn) {
     switch (btn) {
     case UI_BTN_FREQ_UP:
         if (on_spectrum_page(L)) L->curr.freq_hz += FREQ_STEP_BIG;
+        hal_log("[ui] %s freq=%lu\n", button_name(btn), (unsigned long)L->curr.freq_hz);
         break;
     case UI_BTN_FREQ_DN:
         if (on_spectrum_page(L) && L->curr.freq_hz >= FREQ_STEP_BIG) L->curr.freq_hz -= FREQ_STEP_BIG;
+        hal_log("[ui] %s freq=%lu\n", button_name(btn), (unsigned long)L->curr.freq_hz);
         break;
     case UI_BTN_VOL_UP:
         L->curr.volume = (uint8_t)((L->curr.volume + VOL_STEP > 100) ? 100 : L->curr.volume + VOL_STEP);
+        hal_log("[ui] %s volume=%u\n", button_name(btn), L->curr.volume);
         break;
     case UI_BTN_VOL_DN:
         L->curr.volume = (uint8_t)((L->curr.volume < VOL_STEP) ? 0 : L->curr.volume - VOL_STEP);
+        hal_log("[ui] %s volume=%u\n", button_name(btn), L->curr.volume);
         break;
     case UI_BTN_MODE:
-        set_demod(L, (uint8_t)((L->curr.demod + 1) % DEMOD_COUNT));
+        set_demod(L, next_supported_demod(L->curr.demod));
+        hal_log("[ui] %s demod=%u layout=%u\n", button_name(btn), L->curr.demod, L->curr.layout);
         break;
     case UI_BTN_MUTE:
         L->curr.flags ^= UI_FLAG_MUTE;
+        hal_log("[ui] %s mute=%u\n", button_name(btn), (unsigned)((L->curr.flags & UI_FLAG_MUTE) != 0u));
         break;
     case UI_BTN_ZOOM_IN:
         if (on_adsb_page(L)) {
             if (L->curr.adsb_range_mi > 50u) L->curr.adsb_range_mi = 50u;
             else L->curr.adsb_range_mi = 25u;
         }
+        hal_log("[ui] %s range=%u\n", button_name(btn), L->curr.adsb_range_mi);
         break;
     case UI_BTN_ZOOM_OUT:
         if (on_adsb_page(L)) {
             if (L->curr.adsb_range_mi < 50u) L->curr.adsb_range_mi = 50u;
             else L->curr.adsb_range_mi = 75u;
         }
+        hal_log("[ui] %s range=%u\n", button_name(btn), L->curr.adsb_range_mi);
         break;
     default: break;
     }

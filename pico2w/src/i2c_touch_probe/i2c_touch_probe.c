@@ -25,6 +25,16 @@
 
 #define PRC(c) (isprint(c) ? (char)(c) : '.')
 
+#define GOODIX_ADDR_PRIMARY   0x5D
+#define GOODIX_ADDR_ALT       0x14
+#define GOODIX_REG_PRODUCT_ID 0x8140
+#define GOODIX_REG_STATUS     0x814E
+#define GOODIX_REG_POINT_DATA 0x814F
+#define GOODIX_STATUS_READY   0x80
+#define GOODIX_STATUS_COUNT   0x0F
+#define GOODIX_POINT_BYTES    8
+#define GOODIX_MAX_POINTS     5
+
 // --- I2C helpers (all time-bounded so bad wiring can't lock the bus) ---
 
 // Probe one address with a 1-byte read; true if the device ACKs.
@@ -46,6 +56,15 @@ static int read_reg16(uint8_t addr, uint16_t reg, uint8_t *buf, size_t len) {
     int w = i2c_write_timeout_us(I2C_PORT, addr, r, 2, true, TIMEOUT_US);
     if (w < 0) return w;
     return i2c_read_timeout_us(I2C_PORT, addr, buf, len, false, TIMEOUT_US);
+}
+
+static int write_reg16_u8(uint8_t addr, uint16_t reg, uint8_t value) {
+    uint8_t b[3] = { (uint8_t)(reg >> 8), (uint8_t)(reg & 0xFF), value };
+    return i2c_write_timeout_us(I2C_PORT, addr, b, sizeof(b), false, TIMEOUT_US);
+}
+
+static uint16_t le16(const uint8_t *p) {
+    return (uint16_t)((uint16_t)p[0] | ((uint16_t)p[1] << 8));
 }
 
 // --- per-family identification ---
@@ -135,6 +154,77 @@ static void scan_and_identify(void) {
     for (int i = 0; i < n; i++) identify(found[i]);
 }
 
+static int detect_goodix_addr(void) {
+    uint8_t id[4] = {0};
+    if (read_reg16(GOODIX_ADDR_PRIMARY, GOODIX_REG_PRODUCT_ID, id, sizeof(id)) >= 0)
+        return GOODIX_ADDR_PRIMARY;
+    if (read_reg16(GOODIX_ADDR_ALT, GOODIX_REG_PRODUCT_ID, id, sizeof(id)) >= 0)
+        return GOODIX_ADDR_ALT;
+    return -1;
+}
+
+static void poll_goodix_touch(uint8_t addr) {
+    static uint8_t last_status = 0;
+    static uint32_t idle_print_div = 0;
+
+    uint8_t status = 0;
+    int r = read_reg16(addr, GOODIX_REG_STATUS, &status, 1);
+    if (r != 1) {
+        printf("GT911 0x%02X: status read failed (%d)\n", addr, r);
+        sleep_ms(250);
+        return;
+    }
+
+    bool ready = (status & GOODIX_STATUS_READY) != 0;
+    uint8_t count = status & GOODIX_STATUS_COUNT;
+
+    if (!ready) {
+        if (status != last_status || (++idle_print_div % 20u) == 0u) {
+            printf("GT911 0x%02X: idle status=0x%02X\n", addr, status);
+        }
+        last_status = status;
+        return;
+    }
+
+    printf("GT911 0x%02X: READY status=0x%02X count=%u", addr, status, count);
+
+    if (count > GOODIX_MAX_POINTS) {
+        printf("  invalid count, clearing\n");
+        (void)write_reg16_u8(addr, GOODIX_REG_STATUS, 0);
+        return;
+    }
+
+    if (count == 0) {
+        printf("  no contacts\n");
+        (void)write_reg16_u8(addr, GOODIX_REG_STATUS, 0);
+        return;
+    }
+
+    uint8_t pts[GOODIX_MAX_POINTS * GOODIX_POINT_BYTES] = {0};
+    r = read_reg16(addr, GOODIX_REG_POINT_DATA, pts, (size_t)count * GOODIX_POINT_BYTES);
+    if (r != (int)((size_t)count * GOODIX_POINT_BYTES)) {
+        printf("  point read failed (%d)\n", r);
+        (void)write_reg16_u8(addr, GOODIX_REG_STATUS, 0);
+        return;
+    }
+
+    printf("\n");
+    for (uint8_t i = 0; i < count; i++) {
+        const uint8_t *p = pts + ((size_t)i * GOODIX_POINT_BYTES);
+        uint8_t id = p[0];
+        uint16_t x = le16(p + 1);
+        uint16_t y = le16(p + 3);
+        uint16_t size = le16(p + 5);
+        printf("  point[%u]: id=%u x=%u y=%u size=%u raw=%02X %02X %02X %02X %02X %02X %02X %02X\n",
+               i, id, x, y, size, p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7]);
+    }
+
+    if (write_reg16_u8(addr, GOODIX_REG_STATUS, 0) != 3) {
+        printf("  warning: failed to clear status register\n");
+    }
+    last_status = status;
+}
+
 int main(void) {
     stdio_init_all();
 
@@ -148,10 +238,27 @@ int main(void) {
     for (int i = 0; i < 100 && !stdio_usb_connected(); i++) sleep_ms(50);
 
     int iter = 0;
+    int goodix_addr = -1;
     while (true) {
-        printf("\n===== I2C scan #%d  (i2c0  SDA=GP%d  SCL=GP%d  @ %d Hz) =====\n",
-               ++iter, I2C_SDA, I2C_SCL, I2C_BAUD);
-        scan_and_identify();
-        sleep_ms(3000);
+        if (iter == 0 || (iter % 30) == 0) {
+            printf("\n===== I2C scan #%d  (i2c0  SDA=GP%d  SCL=GP%d  @ %d Hz) =====\n",
+                   (iter / 30) + 1, I2C_SDA, I2C_SCL, I2C_BAUD);
+            scan_and_identify();
+            goodix_addr = detect_goodix_addr();
+            if (goodix_addr >= 0) {
+                printf("Entering GT911 touch poll at 0x%02X. Touch the panel; raw points print below.\n",
+                       goodix_addr);
+                (void)write_reg16_u8((uint8_t)goodix_addr, GOODIX_REG_STATUS, 0);
+            } else {
+                printf("No Goodix product ID found at 0x5D or 0x14 yet.\n");
+            }
+        }
+
+        if (goodix_addr >= 0) {
+            poll_goodix_touch((uint8_t)goodix_addr);
+        }
+
+        iter++;
+        sleep_ms(100);
     }
 }

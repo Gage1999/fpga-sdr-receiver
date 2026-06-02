@@ -36,6 +36,8 @@
 #include <time.h>
 #include <unistd.h>
 
+#include "goes_lrit.h"
+
 #define IIO_NAME_PHY  "ad9361-phy"
 #define IIO_NAME_RX   "cf-ad9361-lpc"
 
@@ -793,23 +795,21 @@ static void parse_vcdu_header(const uint8_t *frame, struct vcdu_hdr *h)
                | ((uint32_t)frame[5] >>  6);
 }
 
-/* --- signal handler --- */
-
-static volatile sig_atomic_t keep_running = 1;
-
-static void on_signal(int sig)
-{
-    (void)sig;
-    keep_running = 0;
-}
-
 /* --- main decode loop --- */
 
-static int decode_loop(FILE *src, const struct goes_cfg *cfg,
-                       unsigned actual_rate, FILE *out_fp)
+/*
+ * Decodes IQ from src, recovers VCDU frames, and feeds each into the LRIT
+ * parser which emits TLV_IMAGE_ROW(800 bytes) per decompressed scanline.
+ * Stops when *run goes false or *mode_changed becomes non-zero.
+ */
+static int decode_loop(FILE *src, unsigned actual_rate, unsigned iio_buf,
+                       void (*send_tlv)(uint8_t, const uint8_t *, uint16_t),
+                       void (*drain)(void),
+                       volatile int *mode_changed,
+                       volatile sig_atomic_t *run)
 {
     int16_t *buf;
-    size_t buf_words = (size_t)cfg->iio_buf * 2;
+    size_t buf_words = (size_t)iio_buf * 2;
 
     buf = malloc(buf_words * sizeof(int16_t));
     if (!buf) {
@@ -821,6 +821,14 @@ static int decode_loop(FILE *src, const struct goes_cfg *cfg,
     if (!rs_out) {
         free(buf);
         perror("malloc");
+        return -1;
+    }
+
+    lrit_state_t *lrit = lrit_alloc();
+    if (!lrit) {
+        free(rs_out);
+        free(buf);
+        fprintf(stderr, "lrit_alloc failed\n");
         return -1;
     }
 
@@ -848,7 +856,7 @@ static int decode_loop(FILE *src, const struct goes_cfg *cfg,
     int vit_buf[2];
     int vit_idx = 0;
 
-    while (keep_running) {
+    while (*run && !*mode_changed) {
         size_t got = fread(buf, sizeof(int16_t), buf_words, src);
         if (got == 0)
             break;
@@ -899,8 +907,8 @@ static int decode_loop(FILE *src, const struct goes_cfg *cfg,
             struct vcdu_hdr hdr;
             parse_vcdu_header(rs_out, &hdr);
 
-            if (!cfg->dry_run && out_fp)
-                fwrite(rs_out, 1, FRAME_DATA, out_fp);
+            if (send_tlv)
+                lrit_ingest_vcdu(lrit, rs_out, send_tlv, drain);
         }
 
         /* periodic stats every ~5 s */
@@ -930,12 +938,56 @@ static int decode_loop(FILE *src, const struct goes_cfg *cfg,
             "[GOES] done: samples=%llu frames=%llu rs_errors=%llu snr_est=%.1f dB elapsed=%.1f s\n",
             total_samples, total_frames, total_rs_errors, snr_db, elapsed);
 
+    lrit_free(lrit);
     free(buf);
     free(rs_out);
     return 0;
 }
 
-/* --- CLI --- */
+/* ------------------------------------------------------------------ */
+/* Combined-mode entry point (called from main.c)                     */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Run the GOES-18 LRIT decode loop.  AD9361 configuration and
+ * iio_readdev are handled by the caller (main.c).
+ *
+ * Each successfully decoded 892-byte VCDU frame is sent as a
+ * TLV_IMAGE_ROW packet via send_tlv.  drain() is called after each
+ * packet to collect any backchannel bytes.
+ */
+void goes_run(void (*send_tlv)(uint8_t, const uint8_t *, uint16_t),
+              void (*drain)(void),
+              FILE *iio,
+              unsigned actual_rate,
+              volatile int *mode_changed,
+              volatile sig_atomic_t *run)
+{
+    decode_loop(iio, actual_rate, 8192u, send_tlv, drain, mode_changed, run);
+}
+
+/* ------------------------------------------------------------------ */
+/* Standalone entry point (suppressed when built as part of sdr_main) */
+/* ------------------------------------------------------------------ */
+
+#ifndef SDR_MAIN_BUILD
+
+static volatile sig_atomic_t standalone_run          = 1;
+static volatile int          standalone_mode_changed = 0;
+static FILE                 *standalone_out          = NULL;
+
+static void standalone_on_signal(int sig)
+{
+    (void)sig;
+    standalone_run = 0;
+}
+
+static void standalone_send_tlv(uint8_t type, const uint8_t *data, uint16_t len)
+{
+    (void)type;
+    if (standalone_out)
+        fwrite(data, 1, len, standalone_out);
+}
 
 static void usage(const char *prog)
 {
@@ -1004,11 +1056,10 @@ int main(int argc, char **argv)
     struct goes_cfg cfg;
     unsigned actual_rate = 0;
     FILE *iq  = NULL;
-    FILE *out = NULL;
     int ret = 1;
 
-    signal(SIGINT,  on_signal);
-    signal(SIGTERM, on_signal);
+    signal(SIGINT,  standalone_on_signal);
+    signal(SIGTERM, standalone_on_signal);
 
     if (parse_args(argc, argv, &cfg) != 0) {
         usage(argv[0]);
@@ -1019,12 +1070,12 @@ int main(int argc, char **argv)
         return 1;
 
     if (!cfg.dry_run) {
-        out = fopen(cfg.output, "wb");
-        if (!out) {
+        standalone_out = fopen(cfg.output, "wb");
+        if (!standalone_out) {
             fprintf(stderr, "open %s: %s\n", cfg.output, strerror(errno));
             return 1;
         }
-        fprintf(stderr, "Writing VCDU frames to %s\n", cfg.output);
+        fprintf(stderr, "Writing decompressed 800-px rows to %s\n", cfg.output);
     }
 
     iq = open_iio_readdev(&cfg, actual_rate);
@@ -1033,13 +1084,17 @@ int main(int argc, char **argv)
         goto out;
     }
 
-    ret = decode_loop(iq, &cfg, actual_rate, out) == 0 ? 0 : 1;
+    ret = decode_loop(iq, actual_rate, cfg.iio_buf,
+                     standalone_send_tlv, NULL,
+                     &standalone_mode_changed, &standalone_run) == 0 ? 0 : 1;
 
 out:
     if (iq)
         pclose(iq);
-    if (out)
-        fclose(out);
+    if (standalone_out)
+        fclose(standalone_out);
 
     return ret;
 }
+
+#endif /* SDR_MAIN_BUILD */

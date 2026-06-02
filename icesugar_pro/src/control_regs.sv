@@ -16,18 +16,26 @@ localparam CMD_SET_MODE = 8'h01;
 localparam CMD_SET_VOLUME = 8'h02;
 localparam CMD_SET_FREQ = 8'h03;
 
-localparam MODE_FM = 3'd0;
+localparam MODE_FM   = 3'd0;
+localparam MODE_GOES = 3'd2;
+localparam MODE_ADSB = 3'd3;
 
 always_ff @(posedge clk or posedge rst) begin
     if (rst) begin
         mode <= MODE_FM;
         volume <= 8'hff;
         mute <= 1'b0;
-        freq_hz <= 32'd100_100_000;
+        freq_hz <= 32'd95_100_000;
     end else if (cmd_valid) begin
         case (cmd)
             CMD_SET_MODE: begin
-                mode <= arg[2:0];
+                case (arg[2:0])
+                    MODE_FM,
+                    MODE_GOES,
+                    MODE_ADSB: mode <= arg[2:0];
+                    default: begin
+                    end
+                endcase
             end
             CMD_SET_VOLUME: begin
                 volume <= arg[7:0];

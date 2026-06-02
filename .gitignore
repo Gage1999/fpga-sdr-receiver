@@ -56,6 +56,7 @@ pico2w/src/i2c_touch_probe/build/
 
 # Top-level CMake/ninja build tree for the host harness
 /build/
+build-pico/
 # Generated mem-init asset (derived from riverside_ucr.bin); too large to track
 icesugar_pro/model/assets/*.mem
 *.jpeg

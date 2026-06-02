@@ -50,12 +50,15 @@ IOBUF PORT "LCD_B[4]" DRIVE=4 IO_TYPE=LVCMOS33;
 
 
 # SPI CS0: PlutoSky IQ data
-# JP5 pin 7 (SCK) -> G2, JP5 pin 9 (MOSI) -> T3, JP5 pin 11 (MISO) -> T3, JP5 pin 13 (CS) -> R1
+# Active JP5 landing pins used by the integrated PlutoSky link.
 LOCATE COMP "spi_clk" SITE "G2";
 IOBUF PORT "spi_clk" IO_TYPE=LVCMOS33;
 
 LOCATE COMP "mosi" SITE "K1";
 IOBUF PORT "mosi" IO_TYPE=LVCMOS33;
+
+LOCATE COMP "miso" SITE "T3";
+IOBUF PORT "miso" DRIVE=4 SLEWRATE=FAST IO_TYPE=LVCMOS33;
 
 LOCATE COMP "cs" SITE "R3";
 IOBUF PORT "cs" IO_TYPE=LVCMOS33;

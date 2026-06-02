@@ -21,6 +21,7 @@ module top #(
     input logic spi_clk,
     input logic cs,
     input logic mosi,
+    output logic miso,
 
     input logic spi_clk_pico,
     input logic cs1,
@@ -178,8 +179,11 @@ end
 logic cmd_valid;
 logic [7:0] cmd;
 logic [31:0] cmd_arg;
+logic [15:0] pico_good_frames;
+logic [15:0] pico_bad_frames;
+logic [15:0] pico_dropped_events;
 
-spi_cmd_slave u_spi_cmd (
+spi_ui_cmd_rx u_spi_cmd (
     .spi_clk (spi_clk_pico),
     .spi_cs_n (cs1),
     .spi_mosi (mosi_pico),
@@ -187,7 +191,10 @@ spi_cmd_slave u_spi_cmd (
     .rst (sys_rst),
     .cmd_valid (cmd_valid),
     .cmd (cmd),
-    .arg (cmd_arg)
+    .arg (cmd_arg),
+    .good_frames (pico_good_frames),
+    .bad_frames (pico_bad_frames),
+    .dropped_events (pico_dropped_events)
 );
 
 logic [2:0] mode;
@@ -195,6 +202,8 @@ logic [7:0] volume;
 logic mute;
 logic [31:0] freq_hz;
 logic fm_active;
+logic backchannel_busy;
+logic [15:0] backchannel_dropped_count;
 
 assign fm_active = (mode == 3'd0);
 
@@ -208,6 +217,20 @@ control_regs u_ctrl (
     .volume (volume),
     .mute (mute),
     .freq_hz (freq_hz)
+);
+
+spi_backchannel u_spi_backchannel (
+    .clk (CLK),
+    .rst (sys_rst),
+    .cmd_valid (cmd_valid),
+    .cmd (cmd),
+    .arg (cmd_arg),
+    .spi_clk (spi_clk),
+    .spi_rst (spi_rst),
+    .spi_cs_n (cs),
+    .spi_miso (miso),
+    .busy (backchannel_busy),
+    .dropped_count (backchannel_dropped_count)
 );
 
 // ---------------------------------------------------------------------------
@@ -1236,26 +1259,128 @@ end
 
 logic [15:0] shader_pixel;
 logic [15:0] shader_volume_fill;
+logic [1:0]  shader_layout;
+logic [1:0]  shader_demod;
+logic [95:0] shader_freq_text;
+logic [31:0] shader_demod_label;
+logic [15:0] shader_mode_btn_label;
 logic [15:0] spec_wr_data;
 logic        spec_wr_en;
 assign shader_volume_fill = {8'd0, volume};
 assign spec_wr_data = {wf_wr_magnitude, 8'd0};
 assign spec_wr_en = bin_valid;
+assign shader_demod = mode[1:0];
+
+always_comb begin
+    // Keep the current spectrum/waterfall surface active while the status text
+    // reflects the live mode. Driving full image layouts here opens the heavy
+    // image-button shader path; that can be revisited once the control path is
+    // proven on hardware.
+    shader_layout = 2'd0;
+end
+
+function automatic logic [7:0] ascii_digit(input logic [3:0] digit);
+    begin
+        ascii_digit = 8'h30 + {4'd0, digit};
+    end
+endfunction
+
+function automatic logic [95:0] format_freq_text(input logic [31:0] hz);
+    logic [31:0] rem;
+    logic [3:0]  tens;
+    logic [3:0]  ones;
+    logic [3:0]  frac_tens;
+    logic [3:0]  frac_ones;
+    logic [7:0]  c [0:11];
+    integer      k;
+    begin
+        rem = hz;
+        c[0] = 8'h20;
+        if (rem >= 32'd100_000_000) begin
+            c[0] = 8'h31; // '1'
+            rem = rem - 32'd100_000_000;
+        end
+
+        tens = 4'd0;
+        for (k = 9; k >= 1; k = k - 1) begin
+            if (rem >= (32'(k) * 32'd10_000_000) && tens == 4'd0) begin
+                tens = 4'(k);
+                rem = rem - (32'(k) * 32'd10_000_000);
+            end
+        end
+
+        ones = 4'd0;
+        for (k = 9; k >= 1; k = k - 1) begin
+            if (rem >= (32'(k) * 32'd1_000_000) && ones == 4'd0) begin
+                ones = 4'(k);
+                rem = rem - (32'(k) * 32'd1_000_000);
+            end
+        end
+
+        frac_tens = 4'd0;
+        for (k = 9; k >= 1; k = k - 1) begin
+            if (rem >= (32'(k) * 32'd100_000) && frac_tens == 4'd0) begin
+                frac_tens = 4'(k);
+                rem = rem - (32'(k) * 32'd100_000);
+            end
+        end
+
+        frac_ones = 4'd0;
+        for (k = 9; k >= 1; k = k - 1) begin
+            if (rem >= (32'(k) * 32'd10_000) && frac_ones == 4'd0) begin
+                frac_ones = 4'(k);
+                rem = rem - (32'(k) * 32'd10_000);
+            end
+        end
+
+        c[1]  = (c[0] != 8'h20 || tens != 4'd0) ? ascii_digit(tens) : 8'h20;
+        c[2]  = ascii_digit(ones);
+        c[3]  = 8'h2e; // '.'
+        c[4]  = ascii_digit(frac_tens);
+        c[5]  = ascii_digit(frac_ones);
+        c[6]  = 8'h20;
+        c[7]  = 8'h4d; // 'M'
+        c[8]  = 8'h48; // 'H'
+        c[9]  = 8'h7a; // 'z'
+        c[10] = 8'h20;
+        c[11] = 8'h20;
+        format_freq_text = {c[11], c[10], c[9], c[8], c[7], c[6],
+                            c[5],  c[4],  c[3], c[2], c[1], c[0]};
+    end
+endfunction
+
+always_comb begin
+    shader_freq_text = format_freq_text(freq_hz);
+    unique case (mode)
+        3'd2: begin
+            shader_demod_label    = 32'h53454f47; // "GOES"
+            shader_mode_btn_label = 16'h4f47;     // "GO"
+        end
+        3'd3: begin
+            shader_demod_label    = 32'h42534441; // "ADSB"
+            shader_mode_btn_label = 16'h4441;     // "AD"
+        end
+        default: begin
+            shader_demod_label    = 32'h20204d46; // "FM  "
+            shader_mode_btn_label = 16'h4d46;     // "FM"
+        end
+    endcase
+end
 
 pixel_shader_top u_pixel_shader (
     .x(shader_x),
     .y(shader_y),
     .fb_under(fb_under),
-    .layout(2'd0),
-    .demod(2'd0),
+    .layout(shader_layout),
+    .demod(shader_demod),
     .flags({7'd0, mute}),
     .active_button(8'hff),
     .touch_x(10'd0),
     .touch_y(10'd0),
-    .freq_text(96'h20207A484D3030312E303031), // "100.100MHz  "
-    .demod_label(32'h20204D46),      // "FM  " in byte-index order
+    .freq_text(shader_freq_text),
+    .demod_label(shader_demod_label),
     .rds_line(192'h202020202020202020202020202020202020202020202020),
-    .mode_btn_label(16'h4D46),       // "FM"
+    .mode_btn_label(shader_mode_btn_label),
     .mode_btn_text_x(16'sd8),
     .mode_btn_text_y(16'sd8),
     .plus_text_x(16'sd16),

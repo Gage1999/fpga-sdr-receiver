@@ -99,6 +99,8 @@ typedef struct {
 static aircraft_t g_ac[MAX_AIRCRAFT];
 static int        g_ac_count = 0;
 
+static void ac_expire(void);
+
 /* ------------------------------------------------------------------ */
 /* Statistics                                                          */
 /* ------------------------------------------------------------------ */
@@ -108,11 +110,127 @@ static uint64_t g_crc_ok       = 0;
 static uint64_t g_df17_ok      = 0;
 
 /* ------------------------------------------------------------------ */
-/* Signal handling                                                     */
+/* Signal handling (standalone build only)                            */
 /* ------------------------------------------------------------------ */
 
 static volatile int keep_running = 1;
 static void sigint_handler(int s) { (void)s; keep_running = 0; }
+
+/* ------------------------------------------------------------------ */
+/* TLV aircraft list output                                           */
+/* ------------------------------------------------------------------ */
+
+#define TLV_OBJECT_LIST  0x02
+
+/*
+ * Map projection constants.
+ *
+ * UCR campus is the map center in the 800x480 logical coordinate space.
+ * ADSB_RADIUS_MI statute miles maps to ADSB_R_OUTER pixels (matches the
+ * constants in icesugar_pro/model/include/fb_compositor.h).
+ *
+ * Projection: equirectangular, north-up.
+ *   px = MAP_CX + (lon - UCR_LON) * PX_PER_DEG_LON
+ *   py = MAP_CY - (lat - UCR_LAT) * PX_PER_DEG_LAT
+ */
+#define UCR_LAT         33.9701
+#define UCR_LON       (-117.3281)
+#define ADSB_MAP_CX     400          /* logical map center x (800 px wide) */
+#define ADSB_MAP_CY     240          /* logical map center y (480 px tall) */
+#define ADSB_RADIUS_MI  75           /* nominal ADS-B range in statute miles */
+#define ADSB_R_OUTER    224          /* pixels per ADSB_RADIUS_MI */
+#define MI_PER_DEG_LAT  69.0         /* statute miles per degree latitude */
+
+/*
+ * Per-aircraft wire encoding (20 bytes):
+ *   [0-2]  icao u24 LE
+ *   [3]    spare = 0
+ *   [4-11] callsign 8 bytes null-padded ASCII
+ *   [12-13] alt_ft u16 LE (0xFFFF = unknown; capped at 65534)
+ *   [14-15] speed_kt u16 LE (0xFFFF = unknown; capped at 65534)
+ *   [16-17] map_x u16 LE (0xFFFF = out of range / no position)
+ *   [18-19] map_y u16 LE (0xFFFF = out of range / no position)
+ *
+ * map_x / map_y are logical 800x480 pixel coordinates with UCR campus at
+ * (ADSB_MAP_CX, ADSB_MAP_CY).  The Zynq computes the projection; the
+ * iCeSugar renderer scales them into the display viewport.
+ */
+#define ADSB_PLANE_BYTES   20
+#define MAX_PLANES_PER_PKT 16
+
+static void encode_aircraft(uint8_t *out, const aircraft_t *a)
+{
+    /* [0-3]: ICAO + spare */
+    out[0] = (uint8_t)(a->icao & 0xFFu);
+    out[1] = (uint8_t)((a->icao >> 8)  & 0xFFu);
+    out[2] = (uint8_t)((a->icao >> 16) & 0xFFu);
+    out[3] = 0;
+
+    /* [4-11]: callsign */
+    memset(&out[4], 0, 8);
+    size_t clen = strlen(a->callsign);
+    if (clen > 8) clen = 8;
+    memcpy(&out[4], a->callsign, clen);
+
+    /* [12-13]: alt_ft u16 (0xFFFF = unknown) */
+    uint16_t alt_u16;
+    if (a->altitude == INT32_MIN || a->altitude < 0)
+        alt_u16 = 0xFFFFu;
+    else if (a->altitude > 65534)
+        alt_u16 = 65534u;
+    else
+        alt_u16 = (uint16_t)a->altitude;
+    memcpy(&out[12], &alt_u16, 2);
+
+    /* [14-15]: speed_kt u16 (0xFFFF = unknown) */
+    uint16_t spd_u16;
+    if (a->speed < 0)
+        spd_u16 = 0xFFFFu;
+    else if (a->speed > 65534)
+        spd_u16 = 65534u;
+    else
+        spd_u16 = (uint16_t)a->speed;
+    memcpy(&out[14], &spd_u16, 2);
+
+    /* [16-17] map_x, [18-19] map_y: equirectangular projection onto
+     * the 800x480 logical map (UCR campus at center, north = up).
+     * 0xFFFF = aircraft out of ADSB_RADIUS_MI range or position unknown. */
+    uint16_t map_x = 0xFFFFu, map_y = 0xFFFFu;
+    if (a->have_pos) {
+        double cos_lat = cos(UCR_LAT * M_PI / 180.0);
+        double dlat    = a->lat - UCR_LAT;
+        double dlon    = a->lon - UCR_LON;
+        double dy_mi   = dlat * MI_PER_DEG_LAT;
+        double dx_mi   = dlon * MI_PER_DEG_LAT * cos_lat;
+        double px_per_mi = (double)ADSB_R_OUTER / (double)ADSB_RADIUS_MI;
+        double fx = ADSB_MAP_CX + dx_mi * px_per_mi;
+        double fy = ADSB_MAP_CY - dy_mi * px_per_mi;  /* north up */
+        if (fx >= 0.0 && fx < 800.0 && fy >= 0.0 && fy < 480.0) {
+            map_x = (uint16_t)(fx + 0.5);
+            map_y = (uint16_t)(fy + 0.5);
+        }
+    }
+    memcpy(&out[16], &map_x, 2);
+    memcpy(&out[18], &map_y, 2);
+}
+
+static void send_aircraft_tlv(void (*send_tlv)(uint8_t, const uint8_t *, uint16_t))
+{
+    uint8_t buf[1 + MAX_PLANES_PER_PKT * ADSB_PLANE_BYTES];
+    int     count = 0;
+    time_t  now   = time(NULL);
+
+    ac_expire();
+
+    for (int i = 0; i < g_ac_count && count < MAX_PLANES_PER_PKT; i++) {
+        if (now - g_ac[i].last_seen <= AC_TTL_S)
+            encode_aircraft(&buf[1 + count++ * ADSB_PLANE_BYTES], &g_ac[i]);
+    }
+
+    buf[0] = (uint8_t)count;
+    if (count > 0)
+        send_tlv(TLV_OBJECT_LIST, buf, (uint16_t)(1u + (unsigned)count * ADSB_PLANE_BYTES));
+}
 
 /* ------------------------------------------------------------------ */
 /* IIO helpers                                                         */
@@ -628,8 +746,67 @@ static void print_table(void)
 }
 
 /* ------------------------------------------------------------------ */
-/* Main                                                                */
+/* Combined-mode entry point (called from main.c)                     */
 /* ------------------------------------------------------------------ */
+
+/*
+ * Run the ADS-B decode loop until *keep_running goes false or
+ * *mode_changed becomes non-zero.  AD9361 configuration and
+ * iio_readdev are handled by the caller (main.c).
+ *
+ * send_tlv - callback to send a TLV packet over JP5 SPI
+ * drain    - callback to drain the SPI RX FIFO (backchannel)
+ * iio      - opened iio_readdev pipe
+ */
+void adsb_run(void (*send_tlv)(uint8_t, const uint8_t *, uint16_t),
+              void (*drain)(void),
+              FILE *iio,
+              volatile int *mode_changed,
+              volatile sig_atomic_t *run)
+{
+    int16_t *raw = malloc((size_t)IIO_CHUNK * 2u * sizeof(int16_t));
+    if (!raw) {
+        fprintf(stderr, "adsb_run: malloc failed\n");
+        return;
+    }
+
+    g_ac_count     = 0;
+    g_frames_total = 0;
+    g_crc_ok       = 0;
+    g_df17_ok      = 0;
+    g_maglen       = 0;
+
+    time_t t_last_send = time(NULL) - PRINT_INTERVAL_S;
+
+    while (*run && !*mode_changed) {
+        size_t nr = fread(raw, sizeof(int16_t) * 2u, (size_t)IIO_CHUNK, iio);
+        if (nr == 0) {
+            if (feof(iio)) break;
+            continue;
+        }
+
+        for (size_t k = 0; k < nr; k++)
+            g_magbuf[g_maglen++] = iq_mag(raw[k * 2], raw[k * 2 + 1]);
+
+        scan_magnitude();
+
+        time_t now = time(NULL);
+        if (now - t_last_send >= PRINT_INTERVAL_S) {
+            send_aircraft_tlv(send_tlv);
+            if (drain) drain();
+            print_table();
+            t_last_send = now;
+        }
+    }
+
+    free(raw);
+}
+
+/* ------------------------------------------------------------------ */
+/* Standalone entry point (suppressed when built as part of sdr_main) */
+/* ------------------------------------------------------------------ */
+
+#ifndef SDR_MAIN_BUILD
 
 static void usage(const char *prog)
 {
@@ -726,3 +903,5 @@ int main(int argc, char **argv)
     print_table();
     return 0;
 }
+
+#endif /* SDR_MAIN_BUILD */

@@ -3,6 +3,9 @@
 // Pico SDK implementation of the HAL used by ui_logic.c.
 
 #ifdef TRIAD_FIRMWARE
+#include <stdarg.h>
+#include <stdio.h>
+
 #include "pico/stdlib.h"
 #include "hardware/spi.h"
 
@@ -19,8 +22,11 @@ uint64_t hal_now_us(void) {
 }
 
 void hal_log(const char *fmt, ...) {
-    (void)fmt;
-    // TODO: forward to UART. printf via stdio_init_all would work too.
+    va_list ap;
+    va_start(ap, fmt);
+    vprintf(fmt, ap);
+    va_end(ap);
+    fflush(stdout);
 }
 
 bool hal_touch_poll(touch_event_t *out) {

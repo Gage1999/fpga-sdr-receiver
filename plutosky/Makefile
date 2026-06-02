@@ -3,7 +3,8 @@
         spi-reg-build spi-reg-deploy spi-reg-run \
         test-build test-deploy test-run \
         goes-build goes-deploy goes-run goes-test \
-        ads-build ads-deploy ads-run ads-test
+        ads-build ads-deploy ads-run ads-test \
+        sdr-build sdr-deploy sdr-run sdr-stop
 
 CROSS   = C:/Xilinx/Vitis/2022.1/gnu/aarch32/nt/gcc-arm-linux-gnueabi/bin/arm-linux-gnueabihf-gcc
 PLUTO   ?= 192.168.2.1
@@ -30,7 +31,7 @@ FM_AUDIO_RF_BW    ?= 1000000
 FM_AUDIO_GAIN_MODE ?= slow_attack
 FM_AUDIO_IQ_SHIFT ?= 4
 
-all: stream-build
+all: sdr-build
 
 $(TEST_BIN): $(TEST_SRC) | build
 	$(CROSS) -O2 -static -o $@ $< -lm
@@ -69,9 +70,9 @@ stream-run: stream-deploy
 	MSYS_NO_PATHCONV=1 $(SSH) '/root/icesugar_stream $(STREAM_ARGS)'
 
 stream-stop:
-	MSYS_NO_PATHCONV=1 $(SSH) 'killall icesugar_stream || true'
+	MSYS_NO_PATHCONV=1 $(SSH) 'killall sdr_main icesugar_stream || true'
 
-# Live FM radio over TLV_IQ. Pair with `make prog` in icesugar_pro/.
+# Live FM radio over the known-good TLV_IQ streamer. Pair with `make prog` in icesugar_pro/.
 radio-run: stream-deploy
 	MSYS_NO_PATHCONV=1 $(SSH) '/root/icesugar_stream --mode tlv-radio --freq-mhz $(FREQ_MHZ) --adc-rate $(FM_AUDIO_ADC_RATE) --rate $(FM_AUDIO_IQ_RATE) --chunk-samples $(FM_AUDIO_TLV_CHUNK) --rf-bw $(FM_AUDIO_RF_BW) --gain-mode $(FM_AUDIO_GAIN_MODE) --iq-shift $(FM_AUDIO_IQ_SHIFT) --dc-shift 12'
 
@@ -115,6 +116,26 @@ ads-run: ads-deploy
 # Quick sanity check: configure IIO only, no streaming.
 ads-test: ads-deploy
 	MSYS_NO_PATHCONV=1 $(SSH) '/root/ads_stream --dry-run'
+
+SDR_SRCS = src/main.c src/ads_stream.c src/goes_stream.c src/goes_lrit.c
+SDR_BIN  = build/sdr_main
+SDR_MODE ?= fm
+SDR_FREQ ?= 95.1
+
+$(SDR_BIN): $(SDR_SRCS) | build
+	$(CROSS) -O2 -static -DSDR_MAIN_BUILD -o $@ $(SDR_SRCS) -lm
+
+sdr-build: $(SDR_BIN)
+
+sdr-deploy: sdr-build
+	$(SCP) $(SDR_BIN) root@$(PLUTO):/root/sdr_main
+	MSYS_NO_PATHCONV=1 $(SSH) 'chmod +x /root/sdr_main'
+
+sdr-run: sdr-deploy
+	MSYS_NO_PATHCONV=1 $(SSH) '/root/sdr_main --mode $(SDR_MODE) --freq-mhz $(SDR_FREQ)'
+
+sdr-stop:
+	MSYS_NO_PATHCONV=1 $(SSH) 'killall sdr_main || true'
 
 build:
 	mkdir -p build
