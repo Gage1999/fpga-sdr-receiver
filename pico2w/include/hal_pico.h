@@ -19,6 +19,8 @@ void hal_log(const char *fmt, ...);
 
 bool hal_touch_poll(touch_event_t *out);
 
+void hal_spi_init(void);
+
 // Buffered SPI write. The HAL queues the bytes and flushes them at its own pace.
 void hal_spi_send(const uint8_t *buf, size_t len);
 

@@ -1,11 +1,6 @@
 # Pico firmware build. Only included when -DBUILD_FIRMWARE=ON.
-# Expects pico-sdk to be initialized by the parent (via pico_sdk_init()).
-#
-# Bring-up: see https://github.com/raspberrypi/pico-sdk for the standard
-# import.cmake pattern. Add this once you have a Pico to flash:
-#
-#   include($ENV{PICO_SDK_PATH}/pico_sdk_init.cmake)
-#   pico_sdk_init()
+# Expects the root CMakeLists.txt to import the Pico SDK before project()
+# and call pico_sdk_init() before adding this directory.
 
 add_executable(pico_firmware
     src/main.c

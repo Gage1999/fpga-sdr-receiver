@@ -10,7 +10,7 @@
 
 The Triad Receiver UI is split across two chips:
 
-- **Pi Pico 2 (RP2350, C firmware)** — owns UI state. Reads a Goodix capacitive touch controller over I²C (specific part TBD; GT911 family likely). Maintains current frequency, demod mode, volume, layout, button highlight state. Sends a packed **UI state struct** to the FPGA over SPI (Pico master), with partial diffs and periodic full syncs. Also sends commands to the Zynq over UART (out of scope here).
+- **Pi Pico 2 (RP2350, C firmware)** — owns UI state. Reads a Goodix **GT911** capacitive touch controller over I²C (confirmed on bring-up — 7-bit address `0x5D`, on i2c0/GP4–GP5). Maintains current frequency, demod mode, volume, layout, button highlight state. Sends a packed **UI state struct** to the FPGA over SPI (Pico master), with partial diffs and periodic full syncs. Also sends commands to the Zynq over UART (out of scope here).
 
 - **iCESugar-Pro (ECP5-25K + 32 MB SDRAM, SystemVerilog)** — owns the screen. Hybrid renderer:
   1. **Framebuffer in SDRAM** holds *persistent regions* (waterfall scrollback, GOES image) — written by the compositor, read by scan-out at the pixel clock through a 4-line EBR cache.
@@ -29,7 +29,7 @@ The harness simulates both chips in one host process. The screen renders into an
 | LCD | 4.3" 800×480 RGB-parallel, 60 Hz, RGB565 in our FB |
 | FPGA | Lattice ECP5-25K |
 | Off-board RAM | 32 MB SDRAM (FB lives here, double-buffered) |
-| Touch | Goodix capacitive controller (model TBD; GT911 family likely) over I²C on the Pico |
+| Touch | Goodix **GT911** capacitive controller over I²C on the Pico (7-bit addr `0x5D`) |
 | Pico↔FPGA | SPI, Pico master, MSB-first, CPOL=0 CPHA=0 |
 | Endianness | Little-endian on the wire |
 
@@ -216,6 +216,10 @@ Decisions to enforce:
 ---
 
 ## 5. Wire protocol (Pico → FPGA)
+
+Canonical physical-layer details and bring-up notes live in
+`docs/fpga-sdr-receiver-interface.md` §5. This section is the host-harness view
+of the same `shared/src/wire_protocol.c` format.
 
 ```
 +------+--------+----------+-------------+--------+
@@ -467,8 +471,8 @@ Keyboard equivalents (for scripted tests and laptop use without a touchscreen):
 
 ## 13. What we're explicitly NOT building yet
 
-- Real Goodix I²C driver (`pico/src/touch_goodix.c` — stub). Pin down exact part + I²C address on hardware bring-up.
-- Real Pico SPI master + DMA (HAL stub).
+- Real Goodix I²C driver hardware validation. `pico2w/src/touch_goodix.c` now polls the **GT911 @ `0x5D`**; panel orientation still needs board validation.
+- Real Pico SPI hardware validation and optional DMA. Blocking writes are fine for first bring-up; DMA can come after the link is proven.
 - Zynq-side anything; `synth_data.c` feeds magnitudes/GOES.
 - Audio path. Out of scope for the frontend harness.
 - SDRAM controller, line-buffer cache, arbiter — all modeled as "a flat array" on host. Real implementation is in the architecture doc, built on the gateware side later.
