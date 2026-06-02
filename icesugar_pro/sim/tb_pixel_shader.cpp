@@ -46,6 +46,7 @@ void drive_state(Vpixel_shader *dut, const shader_state_t *st) {
     // little-endian hosts (macOS/arm64 here) because bit 0 of the SV port
     // corresponds to byte 0's LSB.
     std::memcpy(&dut->freq_text,      st->freq_text,      sizeof(st->freq_text));
+    std::memcpy(&dut->band_text,      st->band_text,      sizeof(st->band_text));
     std::memcpy(&dut->demod_label,    st->demod_label,    sizeof(st->demod_label));
     std::memcpy(&dut->rds_line,       st->rds_line,       sizeof(st->rds_line));
     std::memcpy(&dut->mode_btn_label, st->mode_btn_label, sizeof(st->mode_btn_label));
@@ -59,6 +60,8 @@ void drive_state(Vpixel_shader *dut, const shader_state_t *st) {
 
     dut->volume_fill_px  = st->volume_fill_px;
     dut->mute_sprite_id  = st->mute_sprite_id;
+    dut->spectrum_start_bin = st->spectrum_start_bin;
+    dut->spectrum_visible_bins = st->spectrum_visible_bins;
 }
 
 Result run_case(const char *name, const ui_state_t *ui, uint16_t fb_fill) {

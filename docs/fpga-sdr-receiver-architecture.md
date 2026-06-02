@@ -224,6 +224,18 @@ Pico SPI slave on the FPGA writes the UI state shadow RAM (EBR). The shadow is *
 
 The Pico's `OP_PARTIAL_STATE` opcode lets it write a few bytes at a time without disturbing the rest. On `OP_FULL_STATE`, the whole back buffer is rewritten before the next V-sync flip.
 
+The current FM/AM display bitstream implements a reduced version of this path in
+`icesugar_pro/src/ui_wire_rx.sv`: it CRC-validates the canonical `0xA5` frames
+and commits only the live-display fields (`layout`, `demod`, `volume`,
+`freq_hz`, `span_hz_log2`, `flags`, touch coordinates, `active_button`, and
+the first 24 printable RDS characters).
+`ui_status_prepare.sv` then formats the center frequency, visible band range
+(`freq_hz ± span/2`), mode labels, and volume fill. The spectrum shader and
+waterfall row expander consume the full 256-bin FFT row; `span_hz_log2` now
+drives the spectrum FFT input decimator in `top.sv`. The full 1 KB
+double-buffered raw-state shadow remains the target for image-mode payloads and
+larger UI surfaces.
+
 ---
 
 ## 9. Pixel shader (live overlay)

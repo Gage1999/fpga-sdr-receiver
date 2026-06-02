@@ -21,6 +21,14 @@
 #define FREQ_STEP_SMALL 10000u   // 10 kHz
 #define VOL_STEP 5u
 
+static void spectrum_zoom_in(ui_logic_t *L) {
+    if (L->curr.span_hz_log2 > UI_SPAN_LOG2_MIN) L->curr.span_hz_log2--;
+}
+
+static void spectrum_zoom_out(ui_logic_t *L) {
+    if (L->curr.span_hz_log2 < UI_SPAN_LOG2_MAX) L->curr.span_hz_log2++;
+}
+
 static uint8_t adsb_range_clamp(uint8_t range_mi) {
     if (range_mi <= 25u) return 25u;
     if (range_mi <= 50u) return 50u;
@@ -145,14 +153,18 @@ static void action_button_press(ui_logic_t *L, uint8_t btn) {
         hal_log("[ui] %s mute=%u\n", button_name(btn), (unsigned)((L->curr.flags & UI_FLAG_MUTE) != 0u));
         break;
     case UI_BTN_ZOOM_IN:
-        if (on_adsb_page(L)) {
+        if (on_spectrum_page(L)) {
+            spectrum_zoom_in(L);
+        } else if (on_adsb_page(L)) {
             if (L->curr.adsb_range_mi > 50u) L->curr.adsb_range_mi = 50u;
             else L->curr.adsb_range_mi = 25u;
         }
         hal_log("[ui] %s range=%u\n", button_name(btn), L->curr.adsb_range_mi);
         break;
     case UI_BTN_ZOOM_OUT:
-        if (on_adsb_page(L)) {
+        if (on_spectrum_page(L)) {
+            spectrum_zoom_out(L);
+        } else if (on_adsb_page(L)) {
             if (L->curr.adsb_range_mi < 50u) L->curr.adsb_range_mi = 50u;
             else L->curr.adsb_range_mi = 75u;
         }
@@ -206,11 +218,11 @@ static void handle_touch(ui_logic_t *L, const touch_event_t *ev) {
         break;
     }
     case TOUCH_SWIPE_L: {
-        if (on_spectrum_page(L) && L->curr.span_hz_log2 < 24) L->curr.span_hz_log2++;
+        if (on_spectrum_page(L)) spectrum_zoom_out(L);
         break;
     }
     case TOUCH_SWIPE_R: {
-        if (on_spectrum_page(L) && L->curr.span_hz_log2 > 8) L->curr.span_hz_log2--;
+        if (on_spectrum_page(L)) spectrum_zoom_in(L);
         break;
     }
     default: break;

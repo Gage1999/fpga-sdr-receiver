@@ -38,7 +38,10 @@ typedef enum : uint8_t {
 #define UI_BTN_ZOOM_IN   6u
 #define UI_BTN_ZOOM_OUT  7u
 #define UI_BTN_COUNT     8u
-#define UI_BTN_MAIN_COUNT 6u
+#define UI_BTN_MAIN_COUNT UI_BTN_COUNT
+
+#define UI_SPAN_LOG2_MIN 13u
+#define UI_SPAN_LOG2_MAX 18u
 
 #define UI_SPECTRUM_BINS 256
 

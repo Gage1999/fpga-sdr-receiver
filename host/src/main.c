@@ -140,9 +140,15 @@ int main(int argc, char **argv) {
             }
         }
 
-        // Pico → FPGA: spectrum bins synthesized once per frame, pushed
-        // through the Pico-side state.
-        synth_spectrum_bins(pico.L.curr.spectrum_bins);
+        // Pico → FPGA host mock: synthesize the same kind of full-width FFT row
+        // the hardware DSP path produces for the selected RF span.
+        uint16_t synth_bins[UI_SPECTRUM_BINS];
+        synth_spectrum_bins_for_span(pico.L.curr.freq_hz,
+                                     pico.L.curr.span_hz_log2,
+                                     synth_bins);
+        for (uint16_t i = 0; i < UI_SPECTRUM_BINS; i++) {
+            pico.L.curr.spectrum_bins[i] = synth_bins[i];
+        }
         if (pico.L.curr.demod == DEMOD_FM) {
             synth_rds_text(pico.L.curr.rds_text, (uint8_t)sizeof(pico.L.curr.rds_text));
         }

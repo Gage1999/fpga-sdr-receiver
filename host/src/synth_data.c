@@ -3,6 +3,8 @@
 #include <math.h>
 #include <string.h>
 
+#include "ui_state.h"
+
 static uint32_t s_phase;
 static uint32_t s_rng;
 static uint32_t s_goes_counter;
@@ -24,6 +26,16 @@ static uint32_t xorshift32(uint32_t *s) {
     return *s;
 }
 
+static uint16_t clamp_span_log2(uint16_t span_hz_log2) {
+    if (span_hz_log2 < UI_SPAN_LOG2_MIN) return UI_SPAN_LOG2_MIN;
+    if (span_hz_log2 > UI_SPAN_LOG2_MAX) return UI_SPAN_LOG2_MAX;
+    return span_hz_log2;
+}
+
+static float gaussian(float x) {
+    return expf(-x * x);
+}
+
 void synth_init(uint32_t seed) {
     s_phase = 0;
     s_rng = seed ? seed : 0xCAFEBABEu;
@@ -35,17 +47,39 @@ void synth_init(uint32_t seed) {
 }
 
 void synth_spectrum_bins(uint16_t bins[256]) {
+    synth_spectrum_bins_for_span(100000000u, 17u, bins);
+}
+
+void synth_spectrum_bins_for_span(uint32_t center_hz,
+                                  uint16_t span_hz_log2,
+                                  uint16_t bins[256]) {
     s_phase++;
-    // Two drifting peaks + low-floor noise — looks plausibly like a band scan.
-    float center1 = 90.0f + 30.0f * sinf((float)s_phase * 0.013f);
-    float center2 = 170.0f + 25.0f * sinf((float)s_phase * 0.021f + 1.7f);
+    span_hz_log2 = clamp_span_log2(span_hz_log2);
+    float span_hz = (float)(1u << span_hz_log2);
+
+    // Mock real RF: peaks live at absolute Hz positions, while center_hz moves
+    // the visible receiver window across them.
+    const float rf_anchor_hz = 100000000.0f;
+    float peak1_hz = rf_anchor_hz +
+                     18000.0f * sinf((float)s_phase * 0.013f);
+    float peak2_hz = rf_anchor_hz - 52000.0f +
+                     9000.0f * sinf((float)s_phase * 0.021f + 1.7f);
+    float peak3_hz = rf_anchor_hz + 96000.0f +
+                     14000.0f * sinf((float)s_phase * 0.017f + 0.6f);
+    float peak1_w = 1800.0f;
+    float peak2_w = 4200.0f;
+    float peak3_w = 6500.0f;
+    float floor = 0.035f + 0.012f * (float)(UI_SPAN_LOG2_MAX - span_hz_log2);
+
     for (int i = 0; i < 256; i++) {
         float n = (float)(xorshift32(&s_rng) & 0x0FFFu) / 4096.0f;       // 0..1
-        float d1 = ((float)i - center1) / 6.0f;
-        float d2 = ((float)i - center2) / 9.0f;
-        float p1 = expf(-d1 * d1) * 0.95f;
-        float p2 = expf(-d2 * d2) * 0.7f;
-        float v  = (p1 + p2) * 0.85f + n * 0.05f + 0.04f;
+        float bin_pos = ((float)i + 0.5f) / 256.0f - 0.5f;
+        float bin_hz = ((float)center_hz) + bin_pos * span_hz;
+        float p1 = gaussian((bin_hz - peak1_hz) / peak1_w) * 0.95f;
+        float p2 = gaussian((bin_hz - peak2_hz) / peak2_w) * 0.70f;
+        float p3 = gaussian((bin_hz - peak3_hz) / peak3_w) * 0.45f;
+        float ripple = 0.025f * (sinf(bin_hz * 0.00021f + (float)s_phase * 0.031f) + 1.0f);
+        float v  = (p1 + p2 + p3) * 0.85f + n * 0.045f + ripple + floor;
         if (v > 1.0f) v = 1.0f;
         bins[i] = (uint16_t)(v * 65535.0f);
     }
@@ -88,7 +122,7 @@ uint16_t synth_goes_row_index(uint16_t region_h) {
 void synth_rds_text(char *out, uint8_t out_cap) {
     static const char *msgs[] = {
         "KUCR 88.3  UCR RADIO",
-        "RDS DEMO  FM STEREO",
+        "FM STEREO",
         "CS122A SDR RECEIVER",
     };
     if (out_cap == 0) return;

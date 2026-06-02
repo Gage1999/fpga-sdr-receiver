@@ -185,13 +185,16 @@ typedef enum : uint8_t {
 #define UI_FLAG_RECORD       (1u << 1)  // reserved; no visible record button
 #define UI_FLAG_TOUCH_ACTIVE (1u << 2)
 
+#define UI_SPAN_LOG2_MIN 13u
+#define UI_SPAN_LOG2_MAX 18u
+
 typedef struct __attribute__((packed)) {
     uint8_t  version;            // == UI_STATE_VERSION
     uint8_t  layout;             // layout_t
     uint8_t  demod;              // demod_mode_t
     uint8_t  volume;             // 0..100
     uint32_t freq_hz;
-    uint16_t span_hz_log2;
+    uint16_t span_hz_log2;       // visible RF span is 1 << span_hz_log2 Hz
     uint8_t  squelch;
     uint8_t  flags;
     uint16_t touch_x, touch_y;
@@ -212,6 +215,9 @@ Decisions to enforce:
 - Every struct carries a version byte; mismatched frames are dropped.
 - No pointers, no variable-length fields.
 - `_Static_assert` on `__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__` in `wire_protocol.c`.
+- FM/AM zoom is DSP-span zoom: `span_hz_log2` changes by one step per zoom
+  button or swipe and is clamped to `13..18`. The shader/waterfall consume all
+  256 FFT bins; the active FPGA and host mock change the RF span before the FFT.
 
 ---
 
@@ -238,6 +244,11 @@ Opcodes:
 CRC16-CCITT, init 0xFFFF, over OPCODE+LEN+PAYLOAD.
 
 **Partial updates rule:** Pico keeps a "last sent" copy. Diffs sent as `OP_PARTIAL_STATE`. Every 16 frames sends `OP_FULL_STATE`. Bad-CRC frames are silently dropped; next full sync repairs.
+
+For hardware display bring-up, `icesugar_pro/src/ui_wire_rx.sv` consumes this
+same protocol and applies the display-relevant byte offsets documented in
+`docs/fpga-sdr-receiver-interface.md` §5. The host harness still uses
+`wire_consume()` as the executable protocol reference.
 
 API in `wire_protocol.c`, all portable:
 ```c
@@ -302,8 +313,8 @@ uint16_t pixel_shader(uint16_t x, uint16_t y,
 ```
 
 Each `shade_*`:
-- `shade_status` — frequency text, large FM RDS text, demod label, centered volume bar, and 48×48 touch buttons via font + sprite ROM. The mode button uses visually centered two-character labels (`FM`, `AM`, `GO`, `AD`) instead of small pictograms. The visible spectrum controls are tune up/down, volume up/down, mute, and mode; GOES exposes only floating MODE, while ADS-B exposes MODE plus zoom in/out.
-- `shade_spectrum` — `bin_idx = (x * 256) >> log2(r.w)` (powers of 2 only — flag div); `bar_top = r.h - (bins[bin_idx] * r.h >> 16)`; foreground if `y >= bar_top`.
+- `shade_status` — frequency text, FM RDS text, demod label, centered volume bar, and 48×48 touch buttons via font + sprite ROM. The mode button uses visually centered two-character labels (`FM`, `AM`, `GO`, `AD`) instead of small pictograms. The visible spectrum controls are tune up/down, volume up/down, mute, zoom in/out, and mode; GOES exposes only floating MODE, while ADS-B exposes MODE plus zoom in/out.
+- `shade_spectrum` — draws the full 256-bin spectrum row and overlays the visible band readout in the spectrum area. `span_hz_log2` changes the DSP-side Hz/bin, not the displayed bin count.
 - `shade_overlay` — touch cursor crosshair if `flags & TOUCH_ACTIVE`, modal frames, focused-button border.
 
 ---
@@ -372,7 +383,7 @@ loop @ 60 Hz:
         hal_host pushes bytes to spi_link
     fpga_sim.tick():
         drain spi_link, wire_consume() updates fpga_sim's ui_state shadow
-        if synth_data has new magnitudes → fb_compose_waterfall_step()
+        if synth_data has new FFT row    → fb_compose_waterfall_spectrum_step()
         if synth_data has new GOES row    → fb_compose_goes_row() at the current source row
         for y in 0..479: for x in 0..799:
             uint16_t fb_under = fb_read(fb, x, y);
@@ -426,7 +437,7 @@ Keyboard equivalents (for scripted tests and laptop use without a touchscreen):
 - ←/→ → SWIPE_L / SWIPE_R
 - ↑/↓ → freq tune buttons on the spectrum page (synth touches at button center)
 - M → mute toggle on the spectrum page
-- +/- → ADS-B zoom in/out
+- +/- → spectrum or ADS-B zoom in/out
 - 1/2/3/4 → mode switch
 - Space → tap at cursor
 - L → LONG gesture

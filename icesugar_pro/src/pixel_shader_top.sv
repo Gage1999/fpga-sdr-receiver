@@ -7,11 +7,11 @@
 //   - sprite_rom       (status-bar button icons)
 //   - spectrum_bin_ram (256 magnitude bins; written by the Pico/ingest path)
 //
-// The "prepared" shader-state inputs (freq_text, label origins, volume_fill_px,
-// …) are produced once per frame by pixel_shader_prepare() — on the Pico today,
-// or a future on-FPGA prepare engine — and reach this block via the UI state
-// shadow (#12). They stay as ports here: this module is exactly the per-pixel
-// path of the C reference, now backed by real memories instead of harness arrays.
+// The "prepared" shader-state inputs (freq_text, band_text, label origins,
+// volume_fill_px, …) are produced by the C pixel_shader_prepare() model in host
+// tests and by ui_status_prepare.sv in the active FPGA top. They stay as ports
+// here: this module is exactly the per-pixel path of the C reference, now backed
+// by real memories instead of harness arrays.
 //
 // At integration (#18) this replaces u_lcd's pixel logic: scan_timing drives
 // (x,y), the line cache drives fb_under, and `pixel` goes to the LCD pins.
@@ -32,6 +32,7 @@ module pixel_shader_top #(
     input  logic [9:0]   touch_x,
     input  logic [9:0]   touch_y,
     input  logic [95:0]  freq_text,
+    input  logic [159:0] band_text,
     input  logic [31:0]  demod_label,
     input  logic [191:0] rds_line,
     input  logic [15:0]  mode_btn_label,
@@ -43,6 +44,8 @@ module pixel_shader_top #(
     input  logic signed [15:0] minus_text_y,
     input  logic [15:0]  volume_fill_px,
     input  logic [7:0]   mute_sprite_id,
+    input  logic [7:0]   spectrum_start_bin,
+    input  logic [8:0]   spectrum_visible_bins,
 
     // Spectrum bin write port (Pico SPI / ingest writer domain).
     input  logic         spec_wr_clk,
@@ -92,6 +95,7 @@ module pixel_shader_top #(
         .touch_x           (touch_x),
         .touch_y           (touch_y),
         .freq_text         (freq_text),
+        .band_text         (band_text),
         .demod_label       (demod_label),
         .rds_line          (rds_line),
         .mode_btn_label    (mode_btn_label),
@@ -103,6 +107,8 @@ module pixel_shader_top #(
         .minus_text_y      (minus_text_y),
         .volume_fill_px    (volume_fill_px),
         .mute_sprite_id    (mute_sprite_id),
+        .spectrum_start_bin(spectrum_start_bin),
+        .spectrum_visible_bins(spectrum_visible_bins),
         .spectrum_bin_addr (spectrum_bin_addr),
         .spectrum_bin_data (spectrum_bin_data),
         .font16_addr       (font16_addr),

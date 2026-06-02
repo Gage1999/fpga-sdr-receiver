@@ -4,6 +4,7 @@
 
 #include "regions.h"
 #include "screen_config.h"
+#include "ui_state.h"
 
 // Host implementation: literal memmove for waterfall scroll. The FPGA uses
 // a base-row pointer modulo the region height (arch doc §7a); visible
@@ -30,6 +31,27 @@ void fb_compose_waterfall_step(fb_t *fb,
         scratch[x] = palette[magnitudes[x]];
     }
     fb_write_row(fb, r.x0, r.y0, scratch, n);
+}
+
+void fb_compose_waterfall_spectrum_step(fb_t *fb,
+                                        uint8_t layout,
+                                        const uint16_t spectrum_bins[UI_SPECTRUM_BINS],
+                                        uint16_t span_hz_log2,
+                                        const uint16_t palette[256]) {
+    region_t r = region_for_kind(R_WATERFALL, layout);
+    if (r.kind != R_WATERFALL || r.h < 2) return;
+    (void)span_hz_log2;
+
+    uint8_t magnitudes[SCREEN_W];
+    uint16_t n = r.w < SCREEN_W ? r.w : SCREEN_W;
+    for (uint16_t x = 0; x < n; x++) {
+        uint16_t idx = (uint16_t)(((uint32_t)x * UI_SPECTRUM_BINS) / n);
+        if (idx >= UI_SPECTRUM_BINS) idx = UI_SPECTRUM_BINS - 1u;
+        magnitudes[x] = (uint8_t)(spectrum_bins[idx] >> 8);
+    }
+    for (uint16_t x = n; x < SCREEN_W; x++) magnitudes[x] = 0;
+
+    fb_compose_waterfall_step(fb, layout, magnitudes, palette);
 }
 
 void fb_compose_goes_row(fb_t *fb,

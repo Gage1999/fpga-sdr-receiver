@@ -45,6 +45,35 @@ T_CASE(default_state_renders) {
     return 0;
 }
 
+T_CASE(band_text_and_zoom_window_prepare) {
+    ui_state_t ui; ui_state_default(&ui);
+    ui.freq_hz = 100000000u;
+    ui.span_hz_log2 = 17u;
+
+    aux_roms_t roms; aux_roms_default(&roms);
+    shader_state_t st;
+    pixel_shader_prepare(&ui, &roms, &st);
+
+    const char want[] = "099.934-100.066MHz  ";
+    T_EXPECT_EQ(memcmp(st.band_text, want, SHADER_BAND_TEXT_CHARS), 0);
+    T_EXPECT_EQ(st.spectrum_start_bin, 0);
+    T_EXPECT_EQ(st.spectrum_visible_bins, 256);
+
+    ui.span_hz_log2 = UI_SPAN_LOG2_MAX;
+    pixel_shader_prepare(&ui, &roms, &st);
+    const char want_max[] = "099.869-100.131MHz  ";
+    T_EXPECT_EQ(memcmp(st.band_text, want_max, SHADER_BAND_TEXT_CHARS), 0);
+    T_EXPECT_EQ(st.spectrum_start_bin, 0);
+    T_EXPECT_EQ(st.spectrum_visible_bins, 256);
+
+    ui.span_hz_log2 = 24u;
+    pixel_shader_prepare(&ui, &roms, &st);
+    T_EXPECT_EQ(memcmp(st.band_text, want_max, SHADER_BAND_TEXT_CHARS), 0);
+    T_EXPECT_EQ(st.spectrum_start_bin, 0);
+    T_EXPECT_EQ(st.spectrum_visible_bins, 256);
+    return 0;
+}
+
 T_CASE(spectrum_with_bars) {
     ui_state_t ui; ui_state_default(&ui);
     for (int i = 0; i < UI_SPECTRUM_BINS; i++) {
@@ -115,6 +144,7 @@ int main(int argc, char **argv) {
         else if (strncmp(argv[i], "--golden-dir=", 13) == 0) g_golden_dir = argv[i] + 13;
     }
     T_RUN(default_state_renders);
+    T_RUN(band_text_and_zoom_window_prepare);
     T_RUN(spectrum_with_bars);
     T_RUN(touch_overlay);
     T_RUN(mute_button_lit);

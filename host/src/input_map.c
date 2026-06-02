@@ -52,10 +52,12 @@ bool input_map_translate(const SDL_Event *e,
             ev->x = ui_button_cx(UI_BTN_MUTE); ev->y = ui_button_cy(); ev->kind = TOUCH_TAP; return true;
         case SDLK_EQUALS:
         case SDLK_PLUS:
-            if (layout != (uint8_t)LAYOUT_ADSB_FULL) return false;
+            if (layout != (uint8_t)LAYOUT_SPECTRUM_ONLY &&
+                layout != (uint8_t)LAYOUT_ADSB_FULL) return false;
             ev->x = ui_button_cx(UI_BTN_ZOOM_IN); ev->y = ui_button_cy(); ev->kind = TOUCH_TAP; return true;
         case SDLK_MINUS:
-            if (layout != (uint8_t)LAYOUT_ADSB_FULL) return false;
+            if (layout != (uint8_t)LAYOUT_SPECTRUM_ONLY &&
+                layout != (uint8_t)LAYOUT_ADSB_FULL) return false;
             ev->x = ui_button_cx(UI_BTN_ZOOM_OUT); ev->y = ui_button_cy(); ev->kind = TOUCH_TAP; return true;
         case SDLK_l:
             ev->x = (uint16_t)mouse_x; ev->y = (uint16_t)mouse_y; ev->kind = TOUCH_LONG; return true;

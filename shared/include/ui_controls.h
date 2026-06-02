@@ -28,11 +28,11 @@ static inline uint8_t ui_button_slot(uint8_t btn) {
     case UI_BTN_MODE:    return 0u;
     case UI_BTN_ZOOM_IN: return 1u;
     case UI_BTN_ZOOM_OUT:return 2u;
-    case UI_BTN_MUTE:    return 1u;
-    case UI_BTN_VOL_DN:  return 2u;
-    case UI_BTN_VOL_UP:  return 3u;
-    case UI_BTN_FREQ_DN: return 4u;
-    case UI_BTN_FREQ_UP: return 5u;
+    case UI_BTN_MUTE:    return 3u;
+    case UI_BTN_VOL_DN:  return 4u;
+    case UI_BTN_VOL_UP:  return 5u;
+    case UI_BTN_FREQ_DN: return 6u;
+    case UI_BTN_FREQ_UP: return 7u;
     default:             return 0xffu;
     }
 }

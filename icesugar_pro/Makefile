@@ -4,12 +4,15 @@
         prog_fm_audio_test prog_fm_audio_tone_test prog_fm_audio_iq_test \
         prog_sdram_test \
         sim sim_fm sim_lcd sim_fft sim_sdram sim_sdram_bl sim_sdram_wf \
+        sim_spectrum_zoom_decimator \
         sim_line_cache sim_scan_out sim_arb sim_compositor sim_sdram_test \
-        sim_integration sim_spi_frame_rx sim_tlv_demux sim_tlv sim_tlv_all
+        sim_integration sim_spi_frame_rx sim_ui_wire_rx sim_tlv_demux sim_tlv sim_tlv_all
 
 SV_SRCS = src/top.sv \
           src/spi_ui_cmd_rx.sv \
           src/spi_backchannel.sv \
+          src/ui_wire_rx.sv \
+          src/ui_status_prepare.sv \
           src/control_regs.sv \
           src/audio_volume.sv \
           src/spi_iq_slave.sv \
@@ -23,6 +26,7 @@ SV_SRCS = src/top.sv \
           src/scan_out.sv \
           src/line_cache.sv \
           src/compositor.sv \
+          src/spectrum_zoom_decimator.sv \
           src/fft256.sv \
           src/butterfly.sv \
           src/twiddle_rom.sv \
@@ -167,6 +171,10 @@ sim_sdram: tb/sdram_ctrl_tb.sv src/sdram_ctrl.sv | build
 	iverilog -g2012 -o build/sdram_ctrl.sim tb/sdram_ctrl_tb.sv src/sdram_ctrl.sv
 	vvp build/sdram_ctrl.sim
 
+sim_spectrum_zoom_decimator: tb/spectrum_zoom_decimator_tb.sv src/spectrum_zoom_decimator.sv | build
+	iverilog -g2012 -o build/spectrum_zoom_decimator.sim $^
+	vvp build/spectrum_zoom_decimator.sim
+
 sim_sdram_bl: tb/sdram_ctrl_bl_tb.sv src/sdram_ctrl.sv | build
 	iverilog -g2012 -o build/sdram_ctrl_bl.sim tb/sdram_ctrl_bl_tb.sv src/sdram_ctrl.sv
 	vvp build/sdram_ctrl_bl.sim
@@ -204,6 +212,10 @@ sim_integration: sim_sdram sim_line_cache sim_scan_out sim_arb sim_compositor si
 sim_spi_frame_rx: tb/spi_frame_rx_tb.sv src/spi_frame_rx.sv | build
 	iverilog -g2012 -o build/spi_frame_rx.sim $^
 	vvp build/spi_frame_rx.sim
+
+sim_ui_wire_rx: tb/ui_wire_rx_tb.sv src/ui_wire_rx.sv src/spi_frame_rx.sv | build
+	iverilog -g2012 -o build/ui_wire_rx.sim $^
+	vvp build/ui_wire_rx.sim
 
 sim_tlv_demux: tb/tlv_demux_tb.sv src/tlv_demux.sv | build
 	iverilog -g2012 -o build/tlv_demux.sim $^
