@@ -257,7 +257,8 @@ Skeleton present; *not* deployment-ready. From this session's audit:
   or send SPI.
 - ⚠️ `hal_pico.c` — stubs. `hal_touch_poll` returns false. `hal_spi_send`
   is raw bytes (no wire-protocol framing).
-- ⚠️ `touch_goodix.c` — pure stub. Goodix part number not pinned down.
+- ⚠️ `touch_goodix.c` — pure stub. Part pinned down on bring-up: **Goodix
+  GT911 @ I²C `0x5D`** (see `pico2w/src/i2c_touch_probe/`); init + poll still TODO.
 - ⚠️ `CMakeLists.txt` — `pico_sdk_init()` is in a comment block.
 
 Pico bring-up is a parallel track. Estimated 2–3 focused sessions with

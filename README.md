@@ -27,7 +27,7 @@ NOAA APT.)
 |---|---|---|---|
 | [`plutosky/`](plutosky/) | PlutoSky 7020 (XC7Z020, AD9363) | RF front end + JP5 AXI SPI source | AXI SPI verified, RF active |
 | [`icesugar_pro/`](icesugar_pro/) | iCESugar-Pro (ECP5-25K) | display / rendering gateware | SV waterfall/FM/I2S bring-up active |
-| [`pico2w/`](pico2w/) | Raspberry Pi Pico 2W (RP2350) | touch UI firmware | portable C done; bring-up pending |
+| [`pico2w/`](pico2w/) | Raspberry Pi Pico 2W (RP2350) | touch UI firmware | portable C done; touch IC identified (GT911 @ `0x5D`); driver bring-up pending |
 
 ---
 
@@ -152,7 +152,7 @@ pico2w/
 | JP5 data link | AXI Quad SPI at 0x7C440000, about 12.5 MHz SCK |
 | Display FPGA | Lattice ECP5-25K (iCESugar-Pro) + 32 MB SDRAM |
 | LCD | 4.3" 800×480 RGB-parallel, 60 Hz, RGB565 |
-| Touch | Goodix capacitive (model TBD; GT911 family likely) over I²C on the Pico |
+| Touch | Goodix **GT911** capacitive over I²C on the Pico (7-bit addr `0x5D`, i2c0 GP4/GP5) |
 | Pico↔FPGA | SPI, Pico master, MSB-first, CPOL=0 CPHA=0, little-endian |
 
 ---
