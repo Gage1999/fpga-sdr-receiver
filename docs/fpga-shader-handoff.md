@@ -249,17 +249,16 @@ also when scan_out_reader needs to be working).
 
 ## Pico firmware state
 
-Skeleton present; *not* deployment-ready. From this session's audit:
+Partially implemented; *not* deployment-ready.
 
 - ✅ `ui_logic.c` (222 lines) — gesture detection, UI state mutation,
   validated by `test_ui_logic` in the host harness.
-- ⚠️ `main.c` (29 lines) — stub. Tick loop sketched, doesn't poll touch
-  or send SPI.
-- ⚠️ `hal_pico.c` — stubs. `hal_touch_poll` returns false. `hal_spi_send`
-  is raw bytes (no wire-protocol framing).
-- ⚠️ `touch_goodix.c` — pure stub. Part pinned down on bring-up: **Goodix
-  GT911 @ I²C `0x5D`** (see `pico2w/src/i2c_touch_probe/`); init + poll still TODO.
-- ⚠️ `CMakeLists.txt` — `pico_sdk_init()` is in a comment block.
+- ✅ `touch_goodix.c` — GT911 init + raw-point polling implemented for I²C
+  `0x5D` on i2c0 GP4/GP5; panel orientation needs hardware validation.
+- ✅ `CMakeLists.txt` — Pico SDK import/init path is wired when
+  `BUILD_FIRMWARE=ON`.
+- ⚠️ `main.c` / `hal_pico.c` — tick loop and touch polling are wired, but SPI
+  still needs actual Pico pin setup, CS framing, and hardware validation.
 
 Pico bring-up is a parallel track. Estimated 2–3 focused sessions with
 the board in hand. Not blocking any FPGA-side work.

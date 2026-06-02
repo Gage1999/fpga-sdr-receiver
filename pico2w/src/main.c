@@ -9,11 +9,13 @@
 #include "hardware/spi.h"
 
 #include "hal_pico.h"
+#include "touch_goodix.h"
 #include "ui_logic.h"
 
 int main(void) {
     stdio_init_all();
     spi_init(spi0, 8 * 1000 * 1000);  // 8 MHz; tune during bring-up
+    touch_goodix_init();
 
     ui_logic_t L;
     ui_logic_init(&L);

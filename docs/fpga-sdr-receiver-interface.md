@@ -3,8 +3,8 @@
 **Audience:** whoever wires the three boards together and writes the link
 endpoints on each side.
 **Scope:** the physical links between the PlutoSky (Zynq), the iCESugar-Pro
-(ECP5), and the Pico 2W — pinout, the IQ stream format, the command protocol,
-and where each mode is demodulated. Sits between the per-device docs:
+(ECP5), and the Pico 2W — pinout, the IQ stream format, the Pico UI/control
+protocol, and where each mode is demodulated. Sits between the per-device docs:
 
 - `plutosky/docs/architecture.md` — inside the Zynq (now §5 *JP5 AXI SPI Link*).
 - `docs/fpga-sdr-receiver-architecture.md` — inside the ECP5 (the full SDRAM-
@@ -18,6 +18,11 @@ and where each mode is demodulated. Sits between the per-device docs:
 > Pluto-retune path are **not yet wired** — see §7. Source of truth for this
 > doc: `icesugar_pro/src/{top,spi_iq_slave,spi_cmd_slave,control_regs}.sv`,
 > `icesugar_pro/top.lpf`, and `plutosky/src/icesugar_stream.c`.
+>
+> **Pico protocol decision (2026-06-02).** New Pico↔ECP5 work uses the
+> `shared/wire_protocol.c` `0xA5` frame protocol described in §5. The older
+> 5-byte `{cmd,arg}` command SPI path in current gateware is a legacy bring-up
+> shim, not the long-term Pico contract.
 
 ---
 
@@ -52,7 +57,7 @@ Pico→ECP5 SPI (state), and a **Pico↔Pluto UART** for tuning. The built desig
                    LO set by relay      (JP5 return wire)         │  │
                    (CLI for now)                                  │  └─ FM demod ─► I²S ─► PCM5102 ─► spkr
                                                                   │
-                        Pico 2W ──SPI: commands ──────────────────►┘
+                        Pico 2W ──SPI: UI state frames ───────────►┘
                            │            (ECP5 forwards to Pluto)
                            └── I²C ──► touch controller
 ```
@@ -60,7 +65,7 @@ Pico→ECP5 SPI (state), and a **Pico↔Pluto UART** for tuning. The built desig
 | Link | ECP5 slave | Master | Wires | Carries |
 |---|---|---|---|---|
 | **Pluto → ECP5** (JP5) | CS0 (`spi_iq_slave`) | Zynq `axi_quad_spi` | SCK, MOSI, CS | raw IQ, 32-bit words |
-| **Pico → ECP5** | CS1 (`spi_cmd_slave`) | Pico | SCK, MOSI, CS | commands `{u8,u32}` |
+| **Pico → ECP5** | CS1 / UI SPI parser | Pico | SCK, MOSI, CS | `0xA5` UI wire frames |
 | **ECP5 → Pluto** (relay, *planned*) | — | ECP5 | JP5 return wire (MISO, pin 11) | tuning/mode commands |
 
 Both SPI links are **MOSI-only as built** — MISO is unconnected on JP5 (pin 11)
@@ -84,18 +89,24 @@ Zynq master: `axi_spi_jp5` (`axi_quad_spi`) at `0x7C440000`, **Mode 3
 | 13 | T9  | D9 (`cs`)      | CS   | Zynq → ECP5 |
 | 11 | U10 | — (unused)     | MISO | (reserved for a future ECP5 → Zynq path) |
 
-### 3b. Pico → ECP5 (command SPI, CS1)
+### 3b. Pico → ECP5 (UI SPI, CS1)
 
-Pico master, MSB-first. ECP5 pins from `top.lpf`:
+Pico master, **SPI mode 0** (CPOL=0, CPHA=0), 8-bit transfers, MSB-first.
+MOSI-only; MISO is not connected. CS idles high and one complete `0xA5` wire
+frame is sent per CS-low window. Start at **8 MHz SCK** for bring-up; raise only
+after logic-analyzer validation.
 
-| Signal | ECP5 pin |
-|---|---|
-| SCK  | B11 (`spi_clk_pico`) |
-| MOSI | C11 (`mosi_pico`) |
-| CS   | D11 (`cs1`) |
+Recommended Pico 2W pins avoid the GT911 I²C pins (GP4/GP5):
 
-(The harness doc specifies CPOL=0/CPHA=0 for the Pico link; confirm against the
-`spi_cmd_slave` sampling edge during bring-up.)
+| Signal | Pico 2W | ECP5 pin |
+|---|---|---|
+| SCK  | GP18 / SPI0 SCK | B11 (`spi_clk_pico`) |
+| MOSI | GP19 / SPI0 TX  | C11 (`mosi_pico`) |
+| CS   | GP17 / GPIO output | D11 (`cs1`) |
+| GND  | any GND | any GND |
+
+GP16 / SPI0 RX is unused and should be left unconnected unless a future readback
+path is added.
 
 ### 3c. ECP5 outputs
 
@@ -127,12 +138,62 @@ SPI SCK ratio.
 
 ---
 
-## 5. Pico → ECP5: command protocol
+## 5. Pico → ECP5: UI wire protocol
 
-Fixed **5-byte** frames, MSB-first: one command byte then a 32-bit big-endian
-argument. `spi_cmd_slave` deserializes and hands `{cmd, arg}` across to the
-system clock with a toggle synchronizer; `control_regs` applies them. Implemented
-today (`control_regs.sv`):
+The canonical Pico→ECP5 protocol is implemented in `shared/src/wire_protocol.c`
+and declared in `shared/include/wire_protocol.h`. The Pico owns touch and UI
+state, then pushes state frames to the ECP5. The ECP5 treats the link as a
+best-effort, one-way stream; periodic full-state frames repair any dropped or
+bad frame.
+
+SPI carries one complete frame per CS assertion:
+
+```
++------+--------+----------+-------------+----------+
+| 0xA5 | OPCODE | LEN (LE) |   PAYLOAD   | CRC (LE) |
+| 1 B  | 1 B    | 2 B      |   LEN B     | 2 B      |
++------+--------+----------+-------------+----------+
+```
+
+Rules:
+- `0xA5` is the frame magic and is not included in the CRC.
+- `LEN` is payload length in bytes, little-endian.
+- Multi-byte payload fields are little-endian unless the payload explicitly says
+  otherwise. This matches the packed structs in `shared/`.
+- CRC is CRC16-CCITT, init `0xFFFF`, polynomial `0x1021`, no reflection, stored
+  little-endian. Coverage is `[OPCODE, LEN_LO, LEN_HI, payload...]`.
+- Maximum payload is `WIRE_MAX_PAYLOAD` = 1024 bytes; maximum frame is 1030
+  bytes including magic/header/CRC.
+- The receiver drops bad magic, bad length, bad CRC, bad version, and unknown
+  opcodes. It does not ask for retransmission.
+
+Opcodes:
+
+| Opcode | Name | Payload | Purpose |
+|---|---|---|---|
+| `0x01` | `OP_FULL_STATE` | full packed `ui_state_t` | Rewrite the UI shadow back buffer. Sent first and then periodically. |
+| `0x02` | `OP_PARTIAL_STATE` | repeated `{offset:u16, len:u16, bytes[len]}` | Patch changed bytes in the UI shadow back buffer. |
+| `0x03` | `OP_TOUCH_EVENT` | `{x:u16, y:u16, kind:u8}` | Optional event echo/debug path. UI state already carries current touch position and active flags. |
+| `0x04` | `OP_HEARTBEAT` | empty | Link liveness; useful during bring-up and idle periods. |
+| `0x05` | `OP_SPECTRUM_BINS` | `256 * u16` | Optional spectrum-bin fast path if bins move out of `ui_state_t`. |
+
+The first valid frame after reset should be `OP_FULL_STATE`. The Pico sends
+`OP_PARTIAL_STATE` for normal ticks and a full state every 16 UI ticks, matching
+`pico2w/src/ui_logic.c`.
+
+Bring-up test frame:
+
+```
+heartbeat = A5 04 00 00 5C 10
+```
+
+That is `OP_HEARTBEAT`, zero-length payload, CRC `0x105C` stored little-endian.
+
+### 5a. Legacy 5-byte command shim
+
+Current FM-only gateware still contains a small bring-up path:
+`spi_cmd_slave.sv` deserializes fixed `{cmd:u8, arg:u32_be}` frames and
+`control_regs.sv` applies these commands:
 
 | cmd | Name | arg | Effect |
 |---|---|---|---|
@@ -140,15 +201,10 @@ today (`control_regs.sv`):
 | `0x02` | SET_VOLUME | `arg[7:0]` = volume, `arg[8]` = mute | sets volume/mute |
 | `0x03` | SET_FREQ   | `arg` = freq in Hz (reset default 100.1 MHz) | sets `freq_hz` register |
 
-> ⚠️ `SET_FREQ` updates a register on the **ECP5** only. There is no link back to
-> the Pluto, so it does **not** retune the radio today (§7, issue 1).
-
-> **Reconciliation with the harness wire protocol.** `shared/src/wire_protocol.c`
-> (and its tests) model Pico↔ECP5 as a richer **UI-state push**
-> (`OP_FULL_STATE`/`OP_PARTIAL_STATE`/`OP_TOUCH_EVENT`/…). The gateware's command
-> set is a small subset. Before Pico bring-up, decide whether the gateware grows
-> to consume the full wire protocol, or the Pico is reduced to these three
-> commands (plus whatever the status bar needs to render). Not yet unified.
+This shim is useful for electrical SPI smoke tests only. New Pico firmware and
+new ECP5 UI work should target the `0xA5` protocol above. `SET_FREQ` also only
+updates an ECP5 register today; without the planned ECP5→Pluto relay, it does
+not retune the RF front end.
 
 ---
 
@@ -159,7 +215,8 @@ today (`control_regs.sv`):
    (CS0)          (CS16)        (CDC)         │
                                               └─────► FM demod ─► i2s_tx ─► PCM5102
 
-   Pico SPI ─► spi_cmd_slave ─► control_regs ─► {mode, volume, mute, freq_hz}
+   Pico SPI ─► UI wire parser / shadow RAM (target)
+   Pico SPI ─► spi_cmd_slave ─► control_regs (legacy FM smoke-test shim)
    (CS1)
 ```
 
@@ -203,7 +260,10 @@ ADS-B ~2 Msps both blow past even the CS8 ceiling). So the intended split is:
    their (non-IQ) data.
 3. **No SDRAM in the current build.** Image modes and the double-buffered
    framebuffer depend on the SDRAM controller from the architecture doc.
-4. **Pico protocol** not yet reconciled with the harness wire protocol (§5).
+4. **Pico UI parser not implemented in current gateware.** The protocol is now
+   decided (§5), but the current FM bitstream still exposes only the legacy
+   5-byte smoke-test shim. The future ECP5 work is the `0xA5` parser plus
+   double-buffered UI shadow RAM.
 
 ---
 

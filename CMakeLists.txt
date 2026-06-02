@@ -1,9 +1,26 @@
 cmake_minimum_required(VERSION 3.20)
+
+option(BUILD_FIRMWARE "Build the Pico firmware (requires PICO_SDK_PATH)" OFF)
+if(BUILD_FIRMWARE)
+    if(DEFINED ENV{PICO_SDK_PATH})
+        set(PICO_SDK_IMPORT "$ENV{PICO_SDK_PATH}/external/pico_sdk_import.cmake")
+    elseif(PICO_SDK_PATH)
+        set(PICO_SDK_IMPORT "${PICO_SDK_PATH}/external/pico_sdk_import.cmake")
+    else()
+        message(FATAL_ERROR "BUILD_FIRMWARE=ON but PICO_SDK_PATH is not set")
+    endif()
+    include("${PICO_SDK_IMPORT}")
+endif()
+
 project(fpga-sdr-receiver C CXX)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
-set(CMAKE_C_EXTENSIONS OFF)
+if(BUILD_FIRMWARE)
+    set(CMAKE_C_EXTENSIONS ON)
+else()
+    set(CMAKE_C_EXTENSIONS OFF)
+endif()
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 if(NOT CMAKE_BUILD_TYPE)
@@ -12,7 +29,6 @@ endif()
 
 option(BUILD_HOST_HARNESS "Build the SDL host harness" ON)
 option(BUILD_TESTS "Build host-side tests" ON)
-option(BUILD_FIRMWARE "Build the Pico firmware (requires PICO_SDK_PATH)" OFF)
 
 # Treat warnings strictly — this codebase wants discipline.
 add_compile_options(
@@ -94,8 +110,6 @@ endif()
 # pico2w/ — Pico 2W build, only when PICO_SDK_PATH is provided.
 # ──────────────────────────────────────────────────────────────────────────────
 if(BUILD_FIRMWARE)
-    if(NOT DEFINED ENV{PICO_SDK_PATH})
-        message(FATAL_ERROR "BUILD_FIRMWARE=ON but PICO_SDK_PATH is not set")
-    endif()
+    pico_sdk_init()
     add_subdirectory(pico2w)
 endif()
