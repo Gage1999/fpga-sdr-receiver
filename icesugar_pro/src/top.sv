@@ -34,7 +34,18 @@ module top #(
     output logic LCD_DEN,
     output logic [4:0] LCD_R,
     output logic [5:0] LCD_G,
-    output logic [4:0] LCD_B
+    output logic [4:0] LCD_B,
+
+    output logic        sdram_clk,
+    output logic        sdram_cke,
+    output logic        sdram_cs_n,
+    output logic        sdram_ras_n,
+    output logic        sdram_cas_n,
+    output logic        sdram_we_n,
+    output logic [1:0]  sdram_ba,
+    output logic [12:0] sdram_a,
+    output logic [1:0]  sdram_dm,
+    inout  wire  [15:0] sdram_dq
 );
 
 assign i2s_sck = 1'b0;  // PCM5102A SCK-less mode: drive low, chip derives clock from BCK/LRCK
@@ -45,11 +56,13 @@ assign i2s_sck = 1'b0;  // PCM5102A SCK-less mode: drive low, chip derives clock
 // CLKOS = VCO / CLKOS_DIV = 600 / 20 = 30 MHz
 logic clk_pix;
 logic clk_sdram;
+logic clk90;
 logic pll_locked;
 
 `ifdef SIMULATION
 assign clk_sdram  = CLK;
 assign clk_pix    = CLK;
+assign clk90      = CLK;
 assign pll_locked = 1'b1;
 `else
 EHXPLLL #(
@@ -70,10 +83,10 @@ EHXPLLL #(
     .CLKOS_DIV(20),
     .CLKOS_CPHASE(0),
     .CLKOS_FPHASE(0),
-    .CLKOS2_ENABLE("DISABLED"),
-    .CLKOS2_DIV(1),
-    .CLKOS2_CPHASE(0),
-    .CLKOS2_FPHASE(0),
+    .CLKOS2_ENABLE("ENABLED"),
+    .CLKOS2_DIV(6),
+    .CLKOS2_CPHASE(3),
+    .CLKOS2_FPHASE(4),
     .CLKOS3_ENABLE("DISABLED"),
     .CLKOS3_DIV(1),
     .CLKOS3_CPHASE(0),
@@ -85,7 +98,7 @@ EHXPLLL #(
     .CLKFB(clk_sdram),
     .CLKOP(clk_sdram),
     .CLKOS(clk_pix),
-    .CLKOS2(),
+    .CLKOS2(clk90),
     .CLKOS3(),
     .RST(1'b0),
     .STDBY(1'b0),
@@ -115,6 +128,36 @@ always_ff @(posedge CLK) begin
         sys_rst <= 1'b1;
     end else begin
         sys_rst <= 1'b0;
+    end
+end
+
+logic [7:0] sdram_rst_cnt = 8'd0;
+logic sdram_rst = 1'b1;
+
+always_ff @(posedge clk_sdram) begin
+    if (!pll_locked) begin
+        sdram_rst_cnt <= 8'd0;
+        sdram_rst <= 1'b1;
+    end else if (!sdram_rst_cnt[7]) begin
+        sdram_rst_cnt <= sdram_rst_cnt + 8'd1;
+        sdram_rst <= 1'b1;
+    end else begin
+        sdram_rst <= 1'b0;
+    end
+end
+
+logic [7:0] pix_rst_cnt = 8'd0;
+logic pix_rst = 1'b1;
+
+always_ff @(posedge clk_pix) begin
+    if (!pll_locked) begin
+        pix_rst_cnt <= 8'd0;
+        pix_rst <= 1'b1;
+    end else if (!pix_rst_cnt[7]) begin
+        pix_rst_cnt <= pix_rst_cnt + 8'd1;
+        pix_rst <= 1'b1;
+    end else begin
+        pix_rst <= 1'b0;
     end
 end
 
@@ -535,21 +578,106 @@ always_ff @(posedge CLK) begin
     end
 end
 
-// Waterfall buffer
-logic [7:0] wf_bin_req;
-logic [8:0] wf_row_age_req;
-logic [7:0] wf_magnitude;
-logic [8:0] wf_write_row;
+// SDRAM waterfall row source. The FFT produces 256 bins; expand one selected
+// FFT frame into an 800-pixel row, then cross it into clk_sdram for the
+// SDRAM compositor.
+localparam int LCD_H_ACTIVE = 800;
+localparam int LCD_H_TOTAL  = 928;
+localparam int LCD_V_ACTIVE = 480;
+localparam int LCD_V_TOTAL  = 525;
+localparam int WF_LINE_WORDS = 800;
 
-waterfall_buf #(.BINS(256), .ROWS(WF_ROWS)) u_wf (
-    .clk (CLK),
-    .wr_magnitude (wf_wr_magnitude),
-    .wr_valid (wf_wr_valid),
-    .rd_bin (wf_bin_req),
-    .rd_row_age (wf_row_age_req),
-    .rd_magnitude (wf_magnitude),
-    .write_row (wf_write_row)
+logic clr_done;
+logic [7:0] wf_bins [0:255];
+logic [9:0] wf_exp_col;
+logic       wf_exp_active;
+logic [31:0] wf_exp_mul;
+logic [7:0] wf_exp_idx;
+logic [7:0] wf_exp_wdata;
+logic       wf_exp_wpush;
+logic       wf_exp_wfull;
+
+assign wf_exp_mul   = {22'd0, wf_exp_col} * 32'd20972; // floor(col * 256 / 800)
+assign wf_exp_idx   = wf_exp_mul[23:16];
+assign wf_exp_wdata = wf_bins[wf_exp_idx];
+assign wf_exp_wpush = wf_exp_active && !wf_exp_wfull;
+
+always_ff @(posedge CLK or posedge sys_rst) begin
+    if (sys_rst) begin
+        wf_exp_col <= 10'd0;
+        wf_exp_active <= 1'b0;
+    end else begin
+        if (wf_wr_valid)
+            wf_bins[bin_index] <= wf_wr_magnitude;
+
+        if (!wf_exp_active && wf_wr_valid && bin_index == 8'd255) begin
+            wf_exp_active <= 1'b1;
+            wf_exp_col <= 10'd0;
+        end else if (wf_exp_wpush) begin
+            if (wf_exp_col == WF_LINE_WORDS[9:0] - 10'd1) begin
+                wf_exp_active <= 1'b0;
+                wf_exp_col <= 10'd0;
+            end else begin
+                wf_exp_col <= wf_exp_col + 10'd1;
+            end
+        end
+    end
+end
+
+logic [7:0] wf_mag_rdata;
+logic       wf_mag_rpop;
+logic       wf_mag_rempty;
+
+async_fifo #(.WIDTH(8), .DEPTH(1024)) u_wf_mag_fifo (
+    .wclk(CLK),       .wrst(sys_rst),    .wdata(wf_exp_wdata),
+    .wpush(wf_exp_wpush), .wfull(wf_exp_wfull),
+    .rclk(clk_sdram), .rrst(sdram_rst),  .rdata(wf_mag_rdata),
+    .rpop(wf_mag_rpop), .rempty(wf_mag_rempty)
 );
+
+logic [7:0]  comp_mag_in;
+logic        comp_mag_valid;
+logic        comp_busy;
+typedef enum logic [0:0] { WF_FEED, WF_WAIT } wf_feed_state_e;
+wf_feed_state_e wf_feed_state;
+logic [10:0] wf_feed_cnt;
+logic        wf_feed_pending;
+
+assign wf_mag_rpop = !sdram_rst && clr_done && (wf_feed_state == WF_FEED) &&
+                     (wf_feed_cnt < WF_LINE_WORDS[10:0]) &&
+                     !wf_feed_pending && !wf_mag_rempty;
+
+always_ff @(posedge clk_sdram) begin
+    if (sdram_rst | ~clr_done) begin
+        wf_feed_state <= WF_FEED;
+        wf_feed_cnt <= 11'd0;
+        wf_feed_pending <= 1'b0;
+        comp_mag_valid <= 1'b0;
+        comp_mag_in <= 8'd0;
+    end else begin
+        comp_mag_valid <= 1'b0;
+        case (wf_feed_state)
+            WF_FEED: begin
+                if (wf_feed_cnt == WF_LINE_WORDS[10:0]) begin
+                    wf_feed_state <= WF_WAIT;
+                end else if (wf_feed_pending) begin
+                    comp_mag_in <= wf_mag_rdata;
+                    comp_mag_valid <= 1'b1;
+                    wf_feed_cnt <= wf_feed_cnt + 11'd1;
+                    wf_feed_pending <= 1'b0;
+                end else if (!wf_mag_rempty) begin
+                    wf_feed_pending <= 1'b1;
+                end
+            end
+            WF_WAIT: begin
+                if (!comp_busy) begin
+                    wf_feed_cnt <= 11'd0;
+                    wf_feed_state <= WF_FEED;
+                end
+            end
+        endcase
+    end
+end
 
 // FM test source
 function automatic logic signed [15:0] fm_test_sin32(input logic [4:0] phase);
@@ -906,29 +1034,265 @@ i2s_tx #(
     .sdata (i2s_sdata)
 );
 
-// LCD controller
-lcd #(.WF_ROWS(WF_ROWS)) u_lcd (
-    .rst (sys_rst),
-    .pclk (clk_pix),
-    .mode (mode),
-    .volume (volume),
-    .mute (mute),
-    // In TLV mode the debug fields show TLV framing health instead of the raw
-    // FFT counters: rx = IQ packets seen, bin = unknown-type packets, last =
-    // last packet type. rx_sps still reflects real IQ sample flow in both modes.
-    .dbg_rx_count (USE_TLV ? tlv_iq_pkts[7:0] : dbg_rx_count),
-    .dbg_bin_count (USE_TLV ? tlv_unknown[7:0] : dbg_bin_count),
-    .dbg_last_mag (USE_TLV ? tlv_last_type : dbg_last_mag),
-    .rx_sps_bcd (rx_sps_bcd),
-    .wf_magnitude (wf_magnitude),
-    .wf_bin (wf_bin_req),
-    .wf_row_age (wf_row_age_req),
-    .LCD_DE (LCD_DEN),
-    .LCD_R (LCD_R),
-    .LCD_G (LCD_G),
-    .LCD_B (LCD_B)
+// ---------------------------------------------------------------------------
+// SDRAM-backed display path:
+//   compositor writes waterfall rows -> SDRAM
+//   scan_out prefetches SDRAM rows -> line_cache
+//   pixel_shader overlays status/spectrum/buttons -> LCD pins
+// ---------------------------------------------------------------------------
+logic        m_req_valid, m_req_wr, m_req_ready, m_wr_valid, m_wr_ready, m_rd_valid, m_done;
+logic [24:0] m_req_addr;
+logic [9:0]  m_req_len;
+logic [15:0] m_wr_data, m_rd_data;
+logic [15:0] dq_out, dq_in;
+logic        dq_oe;
+
+sdram_ctrl #(.TREF_PERIOD(780), .RD_LAT(3)) u_sdram_ctrl (
+    .clk(clk_sdram), .rst(sdram_rst),
+    .req_valid(m_req_valid), .req_wr(m_req_wr), .req_addr(m_req_addr), .req_len(m_req_len),
+    .req_ready(m_req_ready),
+    .wr_data(m_wr_data), .wr_valid(m_wr_valid), .wr_ready(m_wr_ready),
+    .rd_data(m_rd_data), .rd_valid(m_rd_valid), .done(m_done),
+    .sdram_clk(),
+    .sdram_cke(sdram_cke), .sdram_cs_n(sdram_cs_n),
+    .sdram_ras_n(sdram_ras_n), .sdram_cas_n(sdram_cas_n), .sdram_we_n(sdram_we_n),
+    .sdram_ba(sdram_ba), .sdram_a(sdram_a),
+    .sdram_dq_out(dq_out), .sdram_dq_oe(dq_oe), .sdram_dq_in(dq_in), .sdram_dm(sdram_dm)
+);
+
+assign sdram_dq = dq_oe ? dq_out : 16'hzzzz;
+
+logic [15:0] cap0, cap1, cap2, cap3;
+always_ff @(posedge clk_sdram) cap0 <= sdram_dq;
+always_ff @(posedge clk90)     cap1 <= sdram_dq;
+always_ff @(negedge clk_sdram) cap2 <= sdram_dq;
+always_ff @(negedge clk90)     cap3 <= sdram_dq;
+assign dq_in = cap0;
+assign sdram_clk = clk_sdram;
+
+logic [2:0]       c_req_valid, c_req_wr, c_req_ready, c_wr_valid, c_wr_ready, c_rd_valid, c_done;
+logic [3*25-1:0]  c_req_addr;
+logic [3*10-1:0]  c_req_len;
+logic [3*16-1:0]  c_wr_data, c_rd_data;
+
+sdram_arb #(.N(3)) u_sdram_arb (
+    .clk(clk_sdram), .rst(sdram_rst),
+    .c_req_valid(c_req_valid), .c_req_wr(c_req_wr), .c_req_addr(c_req_addr), .c_req_len(c_req_len),
+    .c_req_ready(c_req_ready), .c_wr_data(c_wr_data), .c_wr_valid(c_wr_valid), .c_wr_ready(c_wr_ready),
+    .c_rd_data(c_rd_data), .c_rd_valid(c_rd_valid), .c_done(c_done),
+    .m_req_valid(m_req_valid), .m_req_wr(m_req_wr), .m_req_addr(m_req_addr), .m_req_len(m_req_len),
+    .m_req_ready(m_req_ready), .m_wr_data(m_wr_data), .m_wr_valid(m_wr_valid), .m_wr_ready(m_wr_ready),
+    .m_rd_data(m_rd_data), .m_rd_valid(m_rd_valid), .m_done(m_done),
+    .gnt_valid(), .gnt()
+);
+
+logic [10:0] scan_x;
+logic [9:0]  scan_y;
+logic        scan_de;
+
+scan_timing #(.H_ACTIVE(LCD_H_ACTIVE), .H_TOTAL(LCD_H_TOTAL), .V_ACTIVE(LCD_V_ACTIVE), .V_TOTAL(LCD_V_TOTAL))
+u_scan_timing (
+    .pclk(clk_pix),
+    .rst(pix_rst),
+    .x(scan_x),
+    .y(scan_y),
+    .de(scan_de)
+);
+
+logic vb1, vb2, vb3;
+logic [8:0] wf_base_row;
+logic [8:0] wf_base_frame;
+wire vblank_pix = (scan_y >= LCD_V_ACTIVE[9:0]);
+always_ff @(posedge clk_sdram) begin
+    vb1 <= vblank_pix;
+    vb2 <= vb1;
+    vb3 <= vb2;
+end
+wire vb_rise = vb2 & ~vb3;
+always_ff @(posedge clk_sdram) begin
+    if (sdram_rst) wf_base_frame <= 9'd0;
+    else if (vb_rise) wf_base_frame <= wf_base_row;
+end
+
+logic        so_req_valid;
+logic [24:0] so_req_addr;
+logic [9:0]  so_req_len;
+logic [1:0]  lc_w_slot;
+logic [9:0]  lc_w_col;
+logic [15:0] lc_w_data;
+logic        lc_w_en;
+
+scan_out #(.LINE_WORDS(WF_LINE_WORDS), .NLINES(LCD_V_ACTIVE), .MAX_BURST(256), .HALF_PAGE(1)) u_scan_out (
+    .clk(clk_sdram), .rst(sdram_rst | ~clr_done),
+    .px_line(scan_y[8:0]),
+    .px_hblank((scan_x >= LCD_H_ACTIVE[10:0]) && (scan_y < LCD_V_ACTIVE[9:0])),
+    .wf_base_row(wf_base_frame),
+    .req_valid(so_req_valid), .req_addr(so_req_addr), .req_len(so_req_len),
+    .req_ready(c_req_ready[0]), .rd_data(c_rd_data[15:0]), .rd_valid(c_rd_valid[0]), .done(c_done[0]),
+    .w_slot(lc_w_slot), .w_col(lc_w_col), .w_data(lc_w_data), .w_en(lc_w_en), .busy()
+);
+
+assign c_req_valid[0]        = so_req_valid;
+assign c_req_wr[0]           = 1'b0;
+assign c_req_addr[0*25 +:25] = so_req_addr;
+assign c_req_len [0*10 +:10] = so_req_len;
+assign c_wr_data [0*16 +:16] = 16'd0;
+assign c_wr_valid[0]         = 1'b0;
+
+logic        comp_req_valid, comp_req_wr, comp_wr_valid;
+logic [24:0] comp_req_addr;
+logic [9:0]  comp_req_len;
+logic [15:0] comp_wr_data;
+
+compositor #(.ROW_WORDS(WF_LINE_WORDS), .NLINES(LCD_V_ACTIVE), .MAX_BURST(256), .HALF_PAGE(1), .TEST_PATTERN(0)) u_compositor (
+    .clk(clk_sdram), .rst(sdram_rst | ~clr_done),
+    .mag_in(comp_mag_in), .mag_valid(comp_mag_valid), .wf_base_row(wf_base_row),
+    .req_valid(comp_req_valid), .req_wr(comp_req_wr), .req_addr(comp_req_addr), .req_len(comp_req_len),
+    .req_ready(c_req_ready[1]), .wr_data(comp_wr_data), .wr_valid(comp_wr_valid), .wr_ready(c_wr_ready[1]),
+    .done(c_done[1]), .busy(comp_busy)
+);
+
+assign c_req_valid[1]        = comp_req_valid;
+assign c_req_wr[1]           = comp_req_wr;
+assign c_req_addr[1*25 +:25] = comp_req_addr;
+assign c_req_len [1*10 +:10] = comp_req_len;
+assign c_wr_data [1*16 +:16] = comp_wr_data;
+assign c_wr_valid[1]         = comp_wr_valid;
+
+// Startup framebuffer clear, client 2. This guarantees the shader sees a known
+// black framebuffer before the first waterfall row arrives.
+logic        clr_req_valid, clr_wr_valid;
+logic [18:0] clr_word;
+logic [10:0] clr_left;
+logic [8:0]  clr_line;
+logic [9:0]  clr_beats;
+typedef enum logic [2:0] { CL_INIT, CL_REQ, CL_WRITE, CL_WAIT, CL_DONE } cl_state_e;
+cl_state_e cl_state;
+wire  [9:0]  clr_col = 10'(clr_word % 256);
+wire  [10:0] clr_rem = 11'd256 - {1'b0, clr_col};
+wire  [10:0] clr_seg = (clr_rem < clr_left) ? clr_rem : clr_left;
+logic [10:0] clr_seg_r;
+always_ff @(posedge clk_sdram) clr_seg_r <= clr_seg;
+
+always_ff @(posedge clk_sdram) begin
+    if (sdram_rst) begin
+        cl_state <= CL_REQ;
+        clr_word <= 19'd0;
+        clr_left <= WF_LINE_WORDS[10:0];
+        clr_line <= 9'd0;
+        clr_beats <= 10'd0;
+        clr_req_valid <= 1'b0;
+        clr_wr_valid <= 1'b0;
+        clr_done <= 1'b0;
+    end else begin
+        case (cl_state)
+            CL_REQ: begin
+                clr_req_valid <= 1'b1;
+                clr_beats <= 10'd0;
+                if (clr_req_valid && c_req_ready[2]) begin
+                    clr_req_valid <= 1'b0;
+                    clr_wr_valid <= 1'b1;
+                    cl_state <= CL_WRITE;
+                end
+            end
+            CL_WRITE: begin
+                clr_wr_valid <= 1'b1;
+                if (c_wr_ready[2] && clr_wr_valid) begin
+                    if (clr_beats == clr_seg_r[9:0] - 10'd1) begin
+                        clr_wr_valid <= 1'b0;
+                        clr_word <= clr_word + 19'(clr_seg_r);
+                        clr_left <= clr_left - clr_seg_r;
+                        cl_state <= CL_WAIT;
+                    end else begin
+                        clr_beats <= clr_beats + 10'd1;
+                    end
+                end
+            end
+            CL_WAIT: begin
+                if (c_done[2]) begin
+                    if (clr_left != 11'd0) begin
+                        cl_state <= CL_REQ;
+                    end else if (clr_line == LCD_V_ACTIVE[8:0] - 9'd1) begin
+                        cl_state <= CL_DONE;
+                    end else begin
+                        clr_line <= clr_line + 9'd1;
+                        clr_left <= WF_LINE_WORDS[10:0];
+                        cl_state <= CL_REQ;
+                    end
+                end
+            end
+            CL_DONE: begin
+                clr_done <= 1'b1;
+            end
+            default: cl_state <= CL_REQ;
+        endcase
+    end
+end
+
+assign c_req_valid[2]        = clr_req_valid;
+assign c_req_wr[2]           = 1'b1;
+assign c_req_addr[2*25 +:25] = (25'(clr_word / 256) << 10) | (25'(clr_col) << 1);
+assign c_req_len [2*10 +:10] = clr_seg_r[9:0];
+assign c_wr_data [2*16 +:16] = 16'h0000;
+assign c_wr_valid[2]         = clr_wr_valid;
+
+logic [15:0] fb_under;
+line_cache u_line_cache (
+    .wclk(clk_sdram), .w_slot(lc_w_slot), .w_col(lc_w_col), .w_data(lc_w_data), .w_en(lc_w_en),
+    .rclk(clk_pix),   .r_slot(scan_y[1:0]), .r_col((scan_x < LCD_H_ACTIVE[10:0]) ? scan_x[9:0] : 10'd0),
+    .r_data(fb_under)
+);
+
+logic [9:0] shader_x;
+logic [9:0] shader_y;
+logic       shader_de;
+always_ff @(posedge clk_pix) begin
+    shader_x <= scan_x[9:0];
+    shader_y <= scan_y[9:0];
+    shader_de <= scan_de;
+end
+
+logic [15:0] shader_pixel;
+logic [15:0] shader_volume_fill;
+logic [15:0] spec_wr_data;
+logic        spec_wr_en;
+assign shader_volume_fill = {8'd0, volume};
+assign spec_wr_data = {wf_wr_magnitude, 8'd0};
+assign spec_wr_en = bin_valid;
+
+pixel_shader_top u_pixel_shader (
+    .x(shader_x),
+    .y(shader_y),
+    .fb_under(fb_under),
+    .layout(2'd0),
+    .demod(2'd0),
+    .flags({7'd0, mute}),
+    .active_button(8'hff),
+    .touch_x(10'd0),
+    .touch_y(10'd0),
+    .freq_text(96'h20207A484D3030312E303031), // "100.100MHz  "
+    .demod_label(32'h20204D46),      // "FM  " in byte-index order
+    .rds_line(192'h202020202020202020202020202020202020202020202020),
+    .mode_btn_label(16'h4D46),       // "FM"
+    .mode_btn_text_x(16'sd8),
+    .mode_btn_text_y(16'sd8),
+    .plus_text_x(16'sd16),
+    .plus_text_y(16'sd8),
+    .minus_text_x(16'sd16),
+    .minus_text_y(16'sd8),
+    .volume_fill_px(shader_volume_fill),
+    .mute_sprite_id(mute ? 8'd5 : 8'd15),
+    .spec_wr_clk(CLK),
+    .spec_wr_en(spec_wr_en),
+    .spec_wr_addr(bin_index),
+    .spec_wr_data(spec_wr_data),
+    .pixel(shader_pixel)
 );
 
 assign LCD_CLK = clk_pix;
+assign LCD_DEN = shader_de;
+assign LCD_R = shader_de ? shader_pixel[15:11] : 5'd0;
+assign LCD_G = shader_de ? shader_pixel[10:5]  : 6'd0;
+assign LCD_B = shader_de ? shader_pixel[4:0]   : 5'd0;
 
 endmodule

@@ -11,6 +11,11 @@ SV_SRCS = src/top.sv \
           src/tlv_iq_sink.sv \
           src/tlv_capture_sink.sv \
           src/async_fifo.sv \
+          src/sdram_ctrl.sv \
+          src/sdram_arb.sv \
+          src/scan_out.sv \
+          src/line_cache.sv \
+          src/compositor.sv \
           src/fft256.sv \
           src/butterfly.sv \
           src/twiddle_rom.sv \
@@ -21,6 +26,11 @@ SV_SRCS = src/top.sv \
           src/i2s_tx.sv \
           src/color_lut.sv \
           src/font8x16_rom.sv \
+          src/font_16x32_rom.sv \
+          src/sprite_rom.sv \
+          src/spectrum_bin_ram.sv \
+          src/pixel_shader.sv \
+          src/pixel_shader_top.sv \
           src/scan_timing.sv \
           src/lcd.sv
 TOP      = top
