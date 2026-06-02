@@ -23,6 +23,34 @@ static struct fb *make_fb(uint16_t fill) {
     return fb;
 }
 
+T_CASE(waterfall_spectrum_span_appends_only_new_row) {
+    struct fb *fb = make_fb(0);
+    region_t r = region_for_kind(R_WATERFALL, (uint8_t)LAYOUT_SPECTRUM_ONLY);
+
+    uint16_t palette[256];
+    uint16_t bins[UI_SPECTRUM_BINS];
+    for (int i = 0; i < 256; i++) {
+        palette[i] = (uint16_t)i;
+        bins[i] = (uint16_t)(i << 8);
+    }
+
+    fb_compose_waterfall_spectrum_step((fb_t *)fb, (uint8_t)LAYOUT_SPECTRUM_ONLY,
+                                       bins, UI_SPAN_LOG2_MAX, palette);
+    fb_compose_waterfall_spectrum_step((fb_t *)fb, (uint8_t)LAYOUT_SPECTRUM_ONLY,
+                                       bins, 17u, palette);
+
+    T_EXPECT_EQ(fb_read((fb_t *)fb, r.x0 + 0u,   r.y0), 0);
+    T_EXPECT_EQ(fb_read((fb_t *)fb, r.x0 + 400u, r.y0), 128);
+    T_EXPECT_EQ(fb_read((fb_t *)fb, r.x0 + 799u, r.y0), 255);
+
+    T_EXPECT_EQ(fb_read((fb_t *)fb, r.x0 + 0u,   r.y0 + 1u), 0);
+    T_EXPECT_EQ(fb_read((fb_t *)fb, r.x0 + 400u, r.y0 + 1u), 128);
+    T_EXPECT_EQ(fb_read((fb_t *)fb, r.x0 + 799u, r.y0 + 1u), 255);
+
+    free(fb);
+    return 0;
+}
+
 T_CASE(waterfall_one_step) {
     struct fb *fb = make_fb(0);
     uint8_t mags[800];
@@ -104,6 +132,7 @@ int main(int argc, char **argv) {
         if (strcmp(argv[i], "--update-goldens") == 0) g_update_goldens = 1;
         else if (strncmp(argv[i], "--golden-dir=", 13) == 0) g_golden_dir = argv[i] + 13;
     }
+    T_RUN(waterfall_spectrum_span_appends_only_new_row);
     T_RUN(waterfall_one_step);
     T_RUN(waterfall_three_steps_distinct_rows);
     T_RUN(region_clear_then_paint);

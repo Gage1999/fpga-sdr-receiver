@@ -15,6 +15,13 @@ void synth_init(uint32_t seed);
 // One spectrum frame (256 bins, 0..65535) — call once per host_harness frame.
 void synth_spectrum_bins(uint16_t bins[256]);
 
+// Spectrum frame generated over the current visible RF span. This is the host
+// mock for the hardware DSP path: every display frame still has 256 bins, but
+// the RF Hz/bin changes with span_hz_log2.
+void synth_spectrum_bins_for_span(uint32_t center_hz,
+                                  uint16_t span_hz_log2,
+                                  uint16_t bins[256]);
+
 // One waterfall row (800 magnitude bytes, 0..255 indexing into the palette).
 void synth_waterfall_row(uint8_t mags[800]);
 

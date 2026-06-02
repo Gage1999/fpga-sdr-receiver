@@ -6,6 +6,8 @@
 #include "aux_roms.h"
 #include "ui_state.h"
 
+#define SHADER_BAND_TEXT_CHARS 20u
+
 // State the per-pixel shader reads. Populated once per frame by
 // pixel_shader_prepare() from the live ui_state_t + ROMs. Everything here
 // either fits in a register on the FPGA or comes from a BRAM port (the
@@ -27,9 +29,15 @@ typedef struct {
 
     // Precomputed text. Sized to the worst-case glyph count each line draws.
     char     freq_text[12];      // "NNN.NN MHz "
+    char     band_text[SHADER_BAND_TEXT_CHARS]; // "LLL.lll-RRR.rrrMHz"
     char     demod_label[4];     // "FM  ", "AM  ", "GOES", "ADSB"
-    char     rds_line[24];       // "RDS " + 20 chars (FM only)
+    char     rds_line[24];       // left-aligned FM RDS/radio text, if available
     char     mode_btn_label[2];  // "FM", "AM", "GO", "AD"
+
+    // Displayed FFT window. The DSP path changes RF span before the 256-bin FFT,
+    // so the shader normally consumes the full display-order row.
+    uint8_t  spectrum_start_bin;
+    uint16_t spectrum_visible_bins;
 
     // label_origin outputs for each text button in the status bar.
     int16_t  mode_btn_text_x;
@@ -39,7 +47,7 @@ typedef struct {
     int16_t  minus_text_x;
     int16_t  minus_text_y;
 
-    // ui->volume * 136 / 100, clamped to 0..136.
+    // ui->volume * status-bar-fill-width / 100, clamped to that width.
     uint16_t volume_fill_px;
 
     // SPR_BTN_MUTE_ON if UI_FLAG_MUTE else SPR_BTN_MUTE.

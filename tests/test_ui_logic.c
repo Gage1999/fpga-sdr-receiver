@@ -83,26 +83,26 @@ T_CASE(layout_follows_demod) {
     T_EXPECT_EQ(L.curr.demod, (uint8_t)DEMOD_FM);
     T_EXPECT_EQ(L.curr.layout, (uint8_t)LAYOUT_SPECTRUM_ONLY);
 
-    push_tap(UI_BTN_MODE); ui_logic_tick(&L);   // AM still shares the spectrum page
-    T_EXPECT_EQ(L.curr.demod, (uint8_t)DEMOD_AM);
-    T_EXPECT_EQ(L.curr.layout, (uint8_t)LAYOUT_SPECTRUM_ONLY);
-
-    push_tap(UI_BTN_MODE); ui_logic_tick(&L);   // GOES → full-screen image page
+    push_tap(UI_BTN_MODE); ui_logic_tick(&L);   // GOES -> full-screen image page
     T_EXPECT_EQ(L.curr.demod, (uint8_t)DEMOD_GOES);
     T_EXPECT_EQ(L.curr.layout, (uint8_t)LAYOUT_GOES_FULL);
 
-    push_tap(UI_BTN_MODE); ui_logic_tick(&L);   // ADS-B → full-screen map page
+    push_tap(UI_BTN_MODE); ui_logic_tick(&L);   // ADS-B -> full-screen map page
     T_EXPECT_EQ(L.curr.demod, (uint8_t)DEMOD_ADSB);
     T_EXPECT_EQ(L.curr.layout, (uint8_t)LAYOUT_ADSB_FULL);
+
+    push_tap(UI_BTN_MODE); ui_logic_tick(&L);   // FM -> spectrum page
+    T_EXPECT_EQ(L.curr.demod, (uint8_t)DEMOD_FM);
+    T_EXPECT_EQ(L.curr.layout, (uint8_t)LAYOUT_SPECTRUM_ONLY);
     return 0;
 }
 
-// Frequency and span are inert on the image pages — only the FM/AM spectrum
+// Frequency and span are inert on the image pages; only the spectrum page
 // page tunes.
 T_CASE(tuning_gated_to_spectrum_page) {
     mock_reset();
     ui_logic_t L; ui_logic_init(&L);
-    push_tap(UI_BTN_MODE); push_tap(UI_BTN_MODE); ui_logic_tick(&L);  // FM → AM → GOES
+    push_tap(UI_BTN_MODE); ui_logic_tick(&L);  // FM -> GOES
     T_EXPECT_EQ(L.curr.layout, (uint8_t)LAYOUT_GOES_FULL);
 
     uint32_t f0 = L.curr.freq_hz;
@@ -117,7 +117,7 @@ T_CASE(tuning_gated_to_spectrum_page) {
 T_CASE(image_page_buttons_are_mode_or_adsb_zoom) {
     mock_reset();
     ui_logic_t L; ui_logic_init(&L);
-    push_tap(UI_BTN_MODE); push_tap(UI_BTN_MODE); ui_logic_tick(&L);  // FM -> AM -> GOES
+    push_tap(UI_BTN_MODE); ui_logic_tick(&L);  // FM -> GOES
     T_EXPECT_EQ(L.curr.layout, (uint8_t)LAYOUT_GOES_FULL);
 
     uint8_t vol0 = L.curr.volume;
@@ -199,9 +199,10 @@ T_CASE(mode_cycles_demod) {
     ui_logic_t L; ui_logic_init(&L);
     T_EXPECT_EQ(L.curr.demod, (uint8_t)DEMOD_FM);
     push_tap(UI_BTN_MODE); ui_logic_tick(&L);
-    T_EXPECT_EQ(L.curr.demod, (uint8_t)DEMOD_AM);
-    // A full cycle returns to the start.
-    for (unsigned i = 1; i < DEMOD_COUNT; i++) { push_tap(UI_BTN_MODE); ui_logic_tick(&L); }
+    T_EXPECT_EQ(L.curr.demod, (uint8_t)DEMOD_GOES);
+    push_tap(UI_BTN_MODE); ui_logic_tick(&L);
+    T_EXPECT_EQ(L.curr.demod, (uint8_t)DEMOD_ADSB);
+    push_tap(UI_BTN_MODE); ui_logic_tick(&L);
     T_EXPECT_EQ(L.curr.demod, (uint8_t)DEMOD_FM);
     return 0;
 }
@@ -232,14 +233,34 @@ T_CASE(swipes_change_span_with_clamps) {
     push_event(0, TOUCH_SWIPE_R); ui_logic_tick(&L);
     T_EXPECT_EQ(L.curr.span_hz_log2, span0);
 
-    // Clamp high at 24.
+    // Clamp high at the widest DSP-backed span.
     for (int i = 0; i < 20; i++) { push_event(0, TOUCH_SWIPE_L); }
     ui_logic_tick(&L);
-    T_EXPECT_EQ(L.curr.span_hz_log2, 24);
-    // Clamp low at 8.
+    T_EXPECT_EQ(L.curr.span_hz_log2, UI_SPAN_LOG2_MAX);
+    // Clamp low at the narrowest DSP-backed span.
     for (int i = 0; i < 30; i++) { push_event(0, TOUCH_SWIPE_R); }
     ui_logic_tick(&L);
-    T_EXPECT_EQ(L.curr.span_hz_log2, 8);
+    T_EXPECT_EQ(L.curr.span_hz_log2, UI_SPAN_LOG2_MIN);
+    return 0;
+}
+
+T_CASE(zoom_buttons_change_spectrum_span) {
+    mock_reset();
+    ui_logic_t L; ui_logic_init(&L);
+    uint16_t span0 = L.curr.span_hz_log2;
+
+    push_tap(UI_BTN_ZOOM_IN); ui_logic_tick(&L);
+    T_EXPECT_EQ(L.curr.span_hz_log2, span0 - 1u);
+    push_tap(UI_BTN_ZOOM_OUT); ui_logic_tick(&L);
+    T_EXPECT_EQ(L.curr.span_hz_log2, span0);
+
+    L.curr.span_hz_log2 = UI_SPAN_LOG2_MIN;
+    push_tap(UI_BTN_ZOOM_IN); ui_logic_tick(&L);
+    T_EXPECT_EQ(L.curr.span_hz_log2, UI_SPAN_LOG2_MIN);
+
+    L.curr.span_hz_log2 = UI_SPAN_LOG2_MAX;
+    push_tap(UI_BTN_ZOOM_OUT); ui_logic_tick(&L);
+    T_EXPECT_EQ(L.curr.span_hz_log2, UI_SPAN_LOG2_MAX);
     return 0;
 }
 
@@ -290,6 +311,7 @@ int main(void) {
     T_RUN(mode_cycles_demod);
     T_RUN(down_then_up_inside_button_fires);
     T_RUN(swipes_change_span_with_clamps);
+    T_RUN(zoom_buttons_change_spectrum_span);
     T_RUN(tap_below_status_bar_ignored);
     T_RUN(sync_cadence_full_then_partials);
     T_FINISH();

@@ -8,8 +8,9 @@
 //   - region_at + top dispatch
 //   - shade_overlay (touch crosshair)
 //   - shade_spectrum (with spectrum BRAM port)
-//   - shade_status (volume + freq/RDS/demod text + buttons; spectrum-only
-//     layout — image-layout floating buttons still stubbed)
+//   - shade_status (volume + center freq / RDS text / demod text + buttons)
+//   - spectrum-band text overlay
+//   - shade_image_mode_button (GOES/ADS-B floating mode/zoom buttons)
 
 module pixel_shader (
     input  logic [9:0]   x,
@@ -25,6 +26,7 @@ module pixel_shader (
 
     // shader_state precomputed strings (LSB = byte 0):
     input  logic [95:0]  freq_text,        // 12 chars
+    input  logic [159:0] band_text,        // 20 chars
     input  logic [31:0]  demod_label,      // 4 chars
     input  logic [191:0] rds_line,         // 24 chars
     input  logic [15:0]  mode_btn_label,   // 2 chars
@@ -39,6 +41,8 @@ module pixel_shader (
 
     input  logic [15:0]  volume_fill_px,
     input  logic [7:0]   mute_sprite_id,
+    input  logic [7:0]   spectrum_start_bin,
+    input  logic [8:0]   spectrum_visible_bins,
 
     // Spectrum bin BRAM (256x16).
     output logic [7:0]   spectrum_bin_addr,
@@ -72,6 +76,25 @@ module pixel_shader (
     localparam logic [9:0] STATUS_SPECTRUM_END = 10'd192;
     localparam logic [9:0] SCREEN_W            = 10'd800;
     localparam logic [9:0] SCREEN_H            = 10'd480;
+    localparam logic [9:0] STATUS_FREQ_X       = 10'd4;
+    localparam logic [9:0] STATUS_FREQ_Y       = 10'd3;
+    localparam logic [9:0] STATUS_RDS_X        = 10'd4;
+    localparam logic [9:0] STATUS_RDS_Y        = 10'd32;
+    localparam logic [9:0] STATUS_RDS_W        = 10'd320;
+    localparam logic [9:0] SPECTRUM_BAND_X     = 10'd4;
+    localparam logic [9:0] SPECTRUM_BAND_Y     = 10'd66;
+    localparam logic [9:0] STATUS_VOL_X        = 10'd204;
+    localparam logic [9:0] STATUS_VOL_Y        = 10'd6;
+    localparam logic [9:0] STATUS_VOL_W        = 10'd120;
+    localparam logic [9:0] STATUS_VOL_H        = 10'd20;
+    localparam logic [9:0] STATUS_DEMOD_X      = 10'd332;
+    localparam logic [9:0] STATUS_DEMOD_Y      = 10'd3;
+    localparam logic [1:0] STATUS_DEMOD_CHARS  = 2'd2;
+    localparam logic [9:0] UI_STATUS_BTN_W     = 10'd48;
+    localparam logic [9:0] UI_STATUS_BTN_GAP   = 10'd6;
+    localparam logic [9:0] UI_STATUS_BTN_STEP  = UI_STATUS_BTN_W + UI_STATUS_BTN_GAP;
+    localparam logic [9:0] UI_STATUS_BTN_TOP   = 10'd8;
+    localparam logic [9:0] UI_STATUS_BTN_BOT   = UI_STATUS_BTN_TOP + UI_STATUS_BTN_W;
 
     localparam int UI_FLAG_TOUCH_ACTIVE_BIT = 2;
 
@@ -113,6 +136,49 @@ module pixel_shader (
     localparam logic [15:0] CROSSHAIR_DOT = 16'hFA8A;
 
     // ── region_at ────────────────────────────────────────────────────────
+    function automatic logic [3:0] ui_button_slot_sv(input logic [2:0] btn);
+        begin
+            unique case (btn)
+                BTN_MODE:     ui_button_slot_sv = 4'd0;
+                BTN_ZOOM_IN:  ui_button_slot_sv = 4'd1;
+                BTN_ZOOM_OUT: ui_button_slot_sv = 4'd2;
+                BTN_MUTE:     ui_button_slot_sv = 4'd3;
+                BTN_VOL_DN:   ui_button_slot_sv = 4'd4;
+                BTN_VOL_UP:   ui_button_slot_sv = 4'd5;
+                BTN_FREQ_DN:  ui_button_slot_sv = 4'd6;
+                BTN_FREQ_UP:  ui_button_slot_sv = 4'd7;
+                default:      ui_button_slot_sv = 4'hf;
+            endcase
+        end
+    endfunction
+
+    function automatic logic [9:0] ui_button_x0_sv(input logic [2:0] btn);
+        logic [3:0] slot;
+        begin
+            slot = ui_button_slot_sv(btn);
+            if (slot == 4'hf)
+                ui_button_x0_sv = SCREEN_W;
+            else
+                ui_button_x0_sv = SCREEN_W - ({6'd0, slot} + 10'd1) * UI_STATUS_BTN_STEP;
+        end
+    endfunction
+
+    function automatic logic ui_button_visible_sv(input logic [1:0] layout_in,
+                                                  input logic [2:0] btn);
+        begin
+            unique case (layout_in)
+                LAYOUT_GOES_FULL:
+                    ui_button_visible_sv = (btn == BTN_MODE);
+                LAYOUT_ADSB_FULL:
+                    ui_button_visible_sv = (btn == BTN_MODE)
+                                        || (btn == BTN_ZOOM_IN)
+                                        || (btn == BTN_ZOOM_OUT);
+                default:
+                    ui_button_visible_sv = 1'b1;
+            endcase
+        end
+    endfunction
+
     logic [2:0] region_kind;
     logic       in_screen;
     assign in_screen = (x < SCREEN_W) && (y < SCREEN_H);
@@ -134,8 +200,23 @@ module pixel_shader (
 
     // ── shade_spectrum ──────────────────────────────────────────────────
     logic [31:0] bin_idx_mul;
-    assign bin_idx_mul = {22'b0, x} * 32'd20972;
-    assign spectrum_bin_addr = bin_idx_mul[23:16];
+    logic [15:0] bin_mul_const;
+    logic [7:0]  span_bin_off;
+    logic [8:0]  span_bin_sum;
+    always_comb begin
+        unique case (spectrum_visible_bins)
+            9'd128: bin_mul_const = 16'd10486;
+            9'd64:  bin_mul_const = 16'd5243;
+            9'd32:  bin_mul_const = 16'd2622;
+            9'd16:  bin_mul_const = 16'd1311;
+            9'd8:   bin_mul_const = 16'd656;
+            default: bin_mul_const = 16'd20972; // 256 visible bins
+        endcase
+    end
+    assign bin_idx_mul = {22'b0, x} * {16'b0, bin_mul_const};
+    assign span_bin_off = bin_idx_mul[23:16];
+    assign span_bin_sum = {1'b0, spectrum_start_bin} + {1'b0, span_bin_off};
+    assign spectrum_bin_addr = span_bin_sum[8] ? 8'hff : span_bin_sum[7:0];
 
     logic [9:0] ly_spec;
     logic [6:0] bar_h;
@@ -148,11 +229,11 @@ module pixel_shader (
     localparam logic [15:0] SPEC_BAR  = 16'h7EF1;
     localparam logic [15:0] SPEC_GRID = 16'h1947;
 
-    logic [15:0] spectrum_pixel;
+    logic [15:0] spectrum_base_pixel;
     always_comb begin
-        if (ly_spec[4:0] == 5'd0)            spectrum_pixel = SPEC_GRID;
-        else if (ly_spec >= {2'b0, bar_top}) spectrum_pixel = SPEC_BAR;
-        else                                 spectrum_pixel = SPEC_BG;
+        if (ly_spec[4:0] == 5'd0)            spectrum_base_pixel = SPEC_GRID;
+        else if (ly_spec >= {2'b0, bar_top}) spectrum_base_pixel = SPEC_BAR;
+        else                                 spectrum_base_pixel = SPEC_BG;
     end
 
     // ── shade_status ────────────────────────────────────────────────────
@@ -164,38 +245,47 @@ module pixel_shader (
 
     logic in_freq_text;
     logic in_rds_text;
+    logic in_band_text;
     logic in_vol_bar;
     logic in_demod_label;
 
-    assign in_freq_text   = (lx_st >= 10'd4)   && (lx_st < 10'd196)
-                         && (ly_st >= 10'd3)   && (ly_st < 10'd32);
-    assign in_rds_text    = (demod == DEMOD_FM)
-                         && (lx_st >= 10'd4)   && (lx_st < 10'd388)
-                         && (ly_st >= 10'd32)  && (ly_st < 10'd64);
-    assign in_vol_bar     = (lx_st >= 10'd220) && (lx_st < 10'd360)
-                         && (ly_st >= 10'd6)   && (ly_st < 10'd26);
-    assign in_demod_label = (lx_st >= 10'd372) && (lx_st < 10'd436)
-                         && (ly_st >= 10'd3)   && (ly_st < 10'd32);
+    assign in_freq_text   = (lx_st >= STATUS_FREQ_X) && (lx_st < STATUS_FREQ_X + 10'd192)
+                         && (ly_st >= STATUS_FREQ_Y) && (ly_st < 10'd32);
+    assign in_rds_text    = (layout == LAYOUT_SPECTRUM_ONLY) && (demod == DEMOD_FM)
+                         && (lx_st >= STATUS_RDS_X) && (lx_st < STATUS_RDS_X + STATUS_RDS_W)
+                         && (ly_st >= STATUS_RDS_Y) && (ly_st < 10'd64);
+    assign in_band_text   = (layout == LAYOUT_SPECTRUM_ONLY)
+                         && (lx_st >= SPECTRUM_BAND_X) && (lx_st < SPECTRUM_BAND_X + 10'd320)
+                         && (ly_st >= SPECTRUM_BAND_Y) && (ly_st < SPECTRUM_BAND_Y + 10'd32);
+    assign in_vol_bar     = (lx_st >= STATUS_VOL_X)  && (lx_st < STATUS_VOL_X + STATUS_VOL_W)
+                         && (ly_st >= STATUS_VOL_Y)  && (ly_st < STATUS_VOL_Y + STATUS_VOL_H);
+    assign in_demod_label = (lx_st >= STATUS_DEMOD_X) && (lx_st < STATUS_DEMOD_X + 10'd32)
+                         && (ly_st >= STATUS_DEMOD_Y) && (ly_st < 10'd32);
 
     // Button hit-test (spectrum-only layout). x0 values from ui_button_x0:
-    //   FREQ_UP slot5 = 476, FREQ_DN slot4 = 530, VOL_UP slot3 = 584,
-    //   VOL_DN slot2 = 638, MUTE slot1 = 692, MODE slot0 = 746. width = 48.
+    //   FREQ_UP slot7 = 368, FREQ_DN slot6 = 422, VOL_UP slot5 = 476,
+    //   VOL_DN slot4 = 530, MUTE slot3 = 584, ZOOM_OUT slot2 = 638,
+    //   ZOOM_IN slot1 = 692, MODE slot0 = 746. width = 48.
     logic       in_button;
     logic [2:0] hit_btn_id;
     logic [9:0] hit_btn_x0;
+    logic [9:0] scan_btn_x0_status;
 
     always_comb begin
         in_button  = 1'b0;
         hit_btn_id = 3'd0;
         hit_btn_x0 = 10'd0;
+        scan_btn_x0_status = 10'd0;
         if (layout == LAYOUT_SPECTRUM_ONLY
-            && ly_st >= 10'd8 && ly_st < 10'd56) begin
-            if      (lx_st >= 10'd476 && lx_st < 10'd524) begin in_button=1; hit_btn_id=BTN_FREQ_UP; hit_btn_x0=10'd476; end
-            else if (lx_st >= 10'd530 && lx_st < 10'd578) begin in_button=1; hit_btn_id=BTN_FREQ_DN; hit_btn_x0=10'd530; end
-            else if (lx_st >= 10'd584 && lx_st < 10'd632) begin in_button=1; hit_btn_id=BTN_VOL_UP;  hit_btn_x0=10'd584; end
-            else if (lx_st >= 10'd638 && lx_st < 10'd686) begin in_button=1; hit_btn_id=BTN_VOL_DN;  hit_btn_x0=10'd638; end
-            else if (lx_st >= 10'd692 && lx_st < 10'd740) begin in_button=1; hit_btn_id=BTN_MUTE;    hit_btn_x0=10'd692; end
-            else if (lx_st >= 10'd746 && lx_st < 10'd794) begin in_button=1; hit_btn_id=BTN_MODE;    hit_btn_x0=10'd746; end
+            && ly_st >= UI_STATUS_BTN_TOP && ly_st < UI_STATUS_BTN_BOT) begin
+            for (int i = 0; i < 8; i++) begin
+                scan_btn_x0_status = ui_button_x0_sv(i[2:0]);
+                if (lx_st >= scan_btn_x0_status && lx_st < scan_btn_x0_status + UI_STATUS_BTN_W) begin
+                    in_button  = 1'b1;
+                    hit_btn_id = i[2:0];
+                    hit_btn_x0 = scan_btn_x0_status;
+                end
+            end
         end
     end
 
@@ -206,6 +296,7 @@ module pixel_shader (
     logic       in_img_button;
     logic [2:0] img_btn_id;
     logic [9:0] img_btn_x0;
+    logic [9:0] scan_btn_x0_img;
 
     assign in_img_layout = (layout == LAYOUT_GOES_FULL)
                         || (layout == LAYOUT_ADSB_FULL);
@@ -214,23 +305,16 @@ module pixel_shader (
         in_img_button = 1'b0;
         img_btn_id    = 3'd0;
         img_btn_x0    = 10'd0;
-        if (in_img_layout && y >= 10'd8 && y < 10'd56) begin
+        scan_btn_x0_img = 10'd0;
+        if (in_img_layout && y >= UI_STATUS_BTN_TOP && y < UI_STATUS_BTN_BOT) begin
             // MODE: visible in both image layouts (slot 0 → x0 = 746)
-            if (x >= 10'd746 && x < 10'd794) begin
-                in_img_button = 1'b1;
-                img_btn_id    = BTN_MODE;
-                img_btn_x0    = 10'd746;
-            end
-            // ZOOM_IN / ZOOM_OUT: ADSB only (slot 1 = 692, slot 2 = 638)
-            else if (layout == LAYOUT_ADSB_FULL) begin
-                if (x >= 10'd692 && x < 10'd740) begin
+            for (int i = 0; i < 8; i++) begin
+                scan_btn_x0_img = ui_button_x0_sv(i[2:0]);
+                if (ui_button_visible_sv(layout, i[2:0])
+                    && x >= scan_btn_x0_img && x < scan_btn_x0_img + UI_STATUS_BTN_W) begin
                     in_img_button = 1'b1;
-                    img_btn_id    = BTN_ZOOM_IN;
-                    img_btn_x0    = 10'd692;
-                end else if (x >= 10'd638 && x < 10'd686) begin
-                    in_img_button = 1'b1;
-                    img_btn_id    = BTN_ZOOM_OUT;
-                    img_btn_x0    = 10'd638;
+                    img_btn_id    = i[2:0];
+                    img_btn_x0    = scan_btn_x0_img;
                 end
             end
         end
@@ -257,17 +341,19 @@ module pixel_shader (
             any_btn_id      = hit_btn_id;
             any_btn_x0      = hit_btn_x0;
             any_btn_bg      = STATUS_BG;
-            any_btn_is_text = (hit_btn_id == BTN_MODE);
+            any_btn_is_text = (hit_btn_id == BTN_MODE)
+                           || (hit_btn_id == BTN_ZOOM_IN)
+                           || (hit_btn_id == BTN_ZOOM_OUT);
         end
     end
 
     // Volume bar pixel.
     logic [15:0] vol_pixel;
     logic [9:0] vol_local_x;
-    assign vol_local_x = lx_st - 10'd220;
+    assign vol_local_x = lx_st - STATUS_VOL_X;
     always_comb begin
-        if (lx_st == 10'd220 || lx_st == 10'd359
-            || ly_st == 10'd6 || ly_st == 10'd25) begin
+        if (lx_st == STATUS_VOL_X || lx_st == STATUS_VOL_X + STATUS_VOL_W - 10'd1
+            || ly_st == STATUS_VOL_Y || ly_st == STATUS_VOL_Y + STATUS_VOL_H - 10'd1) begin
             vol_pixel = STATUS_DIM;
         end else if (vol_local_x >= 10'd2
                      && (vol_local_x - 10'd2) < volume_fill_px[9:0]) begin
@@ -279,15 +365,16 @@ module pixel_shader (
 
     // Text path selection: which of {freq, rds, demod_label, button-text}.
     // Only one is active at a given pixel.
-    typedef enum logic [2:0] {
-        TXT_NONE      = 3'd0,
-        TXT_FREQ      = 3'd1,
-        TXT_RDS       = 3'd2,
-        TXT_DEMOD     = 3'd3,
-        TXT_MODE_BTN  = 3'd4,
-        TXT_IMG_MODE  = 3'd5,
-        TXT_IMG_PLUS  = 3'd6,
-        TXT_IMG_MINUS = 3'd7
+    typedef enum logic [3:0] {
+        TXT_NONE      = 4'd0,
+        TXT_FREQ      = 4'd1,
+        TXT_RDS       = 4'd2,
+        TXT_BAND      = 4'd3,
+        TXT_DEMOD     = 4'd4,
+        TXT_MODE_BTN  = 4'd5,
+        TXT_IMG_MODE  = 4'd6,
+        TXT_PLUS      = 4'd7,
+        TXT_MINUS     = 4'd8
     } text_path_t;
 
     text_path_t text_path;
@@ -295,10 +382,11 @@ module pixel_shader (
         // Image-button text paths first: they're in image layouts where the
         // status-region text paths can't fire anyway (region != STATUS).
         if      (in_img_button && img_btn_id == BTN_MODE)     text_path = TXT_IMG_MODE;
-        else if (in_img_button && img_btn_id == BTN_ZOOM_IN)  text_path = TXT_IMG_PLUS;
-        else if (in_img_button && img_btn_id == BTN_ZOOM_OUT) text_path = TXT_IMG_MINUS;
+        else if (any_btn && any_btn_id == BTN_ZOOM_IN)        text_path = TXT_PLUS;
+        else if (any_btn && any_btn_id == BTN_ZOOM_OUT)       text_path = TXT_MINUS;
         else if (in_freq_text)                                text_path = TXT_FREQ;
         else if (in_rds_text)                                 text_path = TXT_RDS;
+        else if (in_band_text)                                text_path = TXT_BAND;
         else if (in_demod_label)                              text_path = TXT_DEMOD;
         else if (in_button && hit_btn_id == BTN_MODE)         text_path = TXT_MODE_BTN;
         else                                                  text_path = TXT_NONE;
@@ -307,8 +395,8 @@ module pixel_shader (
     // For status-bar text regions: lx-x0 → ch_idx and gx; ly-y0 → gy.
     logic [9:0] freq_col_w;
     logic [9:0] freq_gy_w;
-    assign freq_col_w = lx_st - 10'd4;
-    assign freq_gy_w  = ly_st - 10'd3;
+    assign freq_col_w = lx_st - STATUS_FREQ_X;
+    assign freq_gy_w  = ly_st - STATUS_FREQ_Y;
     logic [3:0] freq_ch_idx;
     logic [3:0] freq_gx;
     logic [4:0] freq_gy;
@@ -318,19 +406,30 @@ module pixel_shader (
 
     logic [9:0] rds_col_w;
     logic [9:0] rds_gy_w;
-    assign rds_col_w = lx_st - 10'd4;
-    assign rds_gy_w  = ly_st - 10'd32;
+    assign rds_col_w = lx_st - STATUS_RDS_X;
+    assign rds_gy_w  = ly_st - STATUS_RDS_Y;
     logic [4:0] rds_ch_idx;
     logic [3:0] rds_gx;
     logic [4:0] rds_gy;
-    assign rds_ch_idx = rds_col_w[8:4];     // 0..23 fits in 5
+    assign rds_ch_idx = rds_col_w[8:4];     // 0..19 fits in 5
     assign rds_gx     = rds_col_w[3:0];
     assign rds_gy     = rds_gy_w[4:0];
 
+    logic [9:0] band_col_w;
+    logic [9:0] band_gy_w;
+    assign band_col_w = lx_st - SPECTRUM_BAND_X;
+    assign band_gy_w  = ly_st - SPECTRUM_BAND_Y;
+    logic [4:0] band_ch_idx;
+    logic [3:0] band_gx;
+    logic [4:0] band_gy;
+    assign band_ch_idx = band_col_w[8:4];     // 0..19 fits in 5
+    assign band_gx     = band_col_w[3:0];
+    assign band_gy     = band_gy_w[4:0];
+
     logic [9:0] demod_col_w;
     logic [9:0] demod_gy_w;
-    assign demod_col_w = lx_st - 10'd372;
-    assign demod_gy_w  = ly_st - 10'd3;
+    assign demod_col_w = lx_st - STATUS_DEMOD_X;
+    assign demod_gy_w  = ly_st - STATUS_DEMOD_Y;
     logic [1:0] demod_ch_idx;
     logic [3:0] demod_gx;
     logic [4:0] demod_gy;
@@ -342,7 +441,7 @@ module pixel_shader (
     logic [9:0] btn_local_x;
     logic [9:0] btn_local_y;
     assign btn_local_x = lx_st - any_btn_x0;
-    assign btn_local_y = ly_st - 10'd8;
+    assign btn_local_y = ly_st - UI_STATUS_BTN_TOP;
 
     logic signed [15:0] btn_local_x_s;
     logic signed [15:0] btn_local_y_s;
@@ -386,6 +485,12 @@ module pixel_shader (
                 text_gy_sel    = rds_gy;
                 text_in_bounds = 1'b1;
             end
+            TXT_BAND: begin
+                text_char      = band_text[band_ch_idx*8 +: 8];
+                text_gx_sel    = band_gx;
+                text_gy_sel    = band_gy;
+                text_in_bounds = 1'b1;
+            end
             TXT_DEMOD: begin
                 text_char      = demod_label[demod_ch_idx*8 +: 8];
                 text_gx_sel    = demod_gx;
@@ -402,7 +507,7 @@ module pixel_shader (
                     text_in_bounds = 1'b1;
                 end
             end
-            TXT_IMG_PLUS: begin
+            TXT_PLUS: begin
                 // One-char "+" label.
                 if (plus_rel_x >= 0 && plus_rel_x < 16'sd16
                     && plus_rel_y >= 0 && plus_rel_y < 16'sd32) begin
@@ -412,7 +517,7 @@ module pixel_shader (
                     text_in_bounds = 1'b1;
                 end
             end
-            TXT_IMG_MINUS: begin
+            TXT_MINUS: begin
                 if (minus_rel_x >= 0 && minus_rel_x < 16'sd16
                     && minus_rel_y >= 0 && minus_rel_y < 16'sd32) begin
                     text_char      = 8'h2D;  // '-'
@@ -497,10 +602,12 @@ module pixel_shader (
     always_comb begin
         // text-button base (edge / inner / fill / ink)
         if (btn_local_x == 10'd0 || btn_local_y == 10'd0
-            || btn_local_x == 10'd47 || btn_local_y == 10'd47) begin
+            || btn_local_x == UI_STATUS_BTN_W - 10'd1
+            || btn_local_y == UI_STATUS_BTN_W - 10'd1) begin
             btn_text_base = TB_EDGE;
         end else if (btn_local_x < 10'd3 || btn_local_y < 10'd3
-                     || btn_local_x >= 10'd45 || btn_local_y >= 10'd45) begin
+                     || btn_local_x >= UI_STATUS_BTN_W - 10'd3
+                     || btn_local_y >= UI_STATUS_BTN_W - 10'd3) begin
             btn_text_base = TB_INNER;
         end else begin
             btn_text_base = TB_FILL;
@@ -540,6 +647,12 @@ module pixel_shader (
         end else begin
             status_pixel = STATUS_BG;
         end
+    end
+
+    logic [15:0] spectrum_pixel;
+    always_comb begin
+        if (in_band_text && glyph_bit) spectrum_pixel = STATUS_DIM;
+        else                           spectrum_pixel = spectrum_base_pixel;
     end
 
     // ── top dispatch ────────────────────────────────────────────────────

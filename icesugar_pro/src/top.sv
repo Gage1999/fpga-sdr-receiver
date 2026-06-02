@@ -175,7 +175,9 @@ always_ff @(posedge spi_clk) begin
     end
 end
 
-// Pico command SPI
+// Pico UI SPI: canonical 0xA5 wire_protocol.c frames.  The compact command
+// extractor feeds the Pluto backchannel/control registers; the display parser
+// keeps the live UI fields used by the shader and spectrum span.
 logic cmd_valid;
 logic [7:0] cmd;
 logic [31:0] cmd_arg;
@@ -199,8 +201,8 @@ spi_ui_cmd_rx u_spi_cmd (
 
 logic [2:0] mode;
 logic [7:0] volume;
-logic mute;
 logic [31:0] freq_hz;
+logic mute;
 logic fm_active;
 logic backchannel_busy;
 logic [15:0] backchannel_dropped_count;
@@ -235,6 +237,37 @@ spi_backchannel u_spi_backchannel (
     .spi_miso (miso),
     .busy (backchannel_busy),
     .dropped_count (backchannel_dropped_count)
+);
+
+logic [1:0] ui_layout;
+logic [1:0] ui_demod;
+logic [7:0] ui_volume;
+logic [31:0] ui_freq_hz;
+logic [15:0] span_hz_log2;
+logic [7:0] ui_flags;
+logic [9:0] touch_x;
+logic [9:0] touch_y;
+logic [7:0] active_button;
+logic [191:0] rds_line;
+logic ui_frame_valid;
+
+ui_wire_rx u_ui_wire_rx (
+    .spi_clk (spi_clk_pico),
+    .spi_cs_n(cs1),
+    .spi_mosi(mosi_pico),
+    .clk (CLK),
+    .rst (sys_rst),
+    .layout(ui_layout),
+    .demod(ui_demod),
+    .volume (ui_volume),
+    .freq_hz(ui_freq_hz),
+    .span_hz_log2(span_hz_log2),
+    .flags(ui_flags),
+    .touch_x(touch_x),
+    .touch_y(touch_y),
+    .active_button(active_button),
+    .rds_line(rds_line),
+    .frame_valid(ui_frame_valid)
 );
 
 // ---------------------------------------------------------------------------
@@ -441,6 +474,10 @@ logic [4:0] wf_frame_skip;
 logic [7:0] dbg_rx_count;
 logic [7:0] dbg_bin_count;
 logic [7:0] dbg_last_mag;
+logic signed [15:0] fft_i;
+logic signed [15:0] fft_q;
+logic fft_valid;
+logic [2:0] spectrum_decim_log2;
 localparam RX_SPS_CLK_W = $clog2(CLK_HZ);
 logic [31:0] rx_sps_bcd;
 logic [31:0] rx_sps_bcd_accum;
@@ -468,19 +505,32 @@ function automatic logic signed [15:0] sat17_to_16(input logic signed [16:0] x);
     end
 endfunction
 
+spectrum_zoom_decimator u_spectrum_zoom_decimator (
+    .clk(CLK),
+    .rst(sys_rst),
+    .in_i(sys_i),
+    .in_q(sys_q),
+    .in_valid(sys_iq_valid),
+    .span_hz_log2(span_hz_log2),
+    .out_i(fft_i),
+    .out_q(fft_q),
+    .out_valid(fft_valid),
+    .decim_log2(spectrum_decim_log2)
+);
+
 always_ff @(posedge CLK or posedge sys_rst) begin
     if (sys_rst) begin
         fft_dc_i <= '0;
         fft_dc_q <= '0;
-    end else if (sys_iq_valid) begin
-        fft_dc_i <= fft_dc_i + (({{8{sys_i[15]}}, sys_i} - fft_dc_i) >>> FFT_DC_SHIFT);
-        fft_dc_q <= fft_dc_q + (({{8{sys_q[15]}}, sys_q} - fft_dc_q) >>> FFT_DC_SHIFT);
+    end else if (fft_valid) begin
+        fft_dc_i <= fft_dc_i + (({{8{fft_i[15]}}, fft_i} - fft_dc_i) >>> FFT_DC_SHIFT);
+        fft_dc_q <= fft_dc_q + (({{8{fft_q[15]}}, fft_q} - fft_dc_q) >>> FFT_DC_SHIFT);
     end
 end
 
 always_comb begin
-    fft_i_hp_wide = $signed({sys_i[15], sys_i}) - $signed(fft_dc_i[16:0]);
-    fft_q_hp_wide = $signed({sys_q[15], sys_q}) - $signed(fft_dc_q[16:0]);
+    fft_i_hp_wide = $signed({fft_i[15], fft_i}) - $signed(fft_dc_i[16:0]);
+    fft_q_hp_wide = $signed({fft_q[15], fft_q}) - $signed(fft_dc_q[16:0]);
     fft_i_in = sat17_to_16(fft_i_hp_wide);
     fft_q_in = sat17_to_16(fft_q_hp_wide);
 end
@@ -490,7 +540,7 @@ fft256 u_fft (
     .rst (sys_rst),
     .i_in (fft_i_in),
     .q_in (fft_q_in),
-    .in_valid (sys_iq_valid),
+    .in_valid (fft_valid),
     .bin_magnitude (bin_magnitude),
     .bin_index (bin_index),
     .bin_valid (bin_valid)
@@ -618,10 +668,15 @@ logic [7:0] wf_bins [0:255];
 logic [9:0] wf_exp_col;
 logic       wf_exp_active;
 logic [31:0] wf_exp_mul;
+logic [15:0] wf_exp_mul_const;
 logic [7:0] wf_exp_display_bin;
+logic [7:0] wf_exp_bin_off;
+logic [8:0] wf_exp_bin_sum;
 logic [7:0] wf_exp_idx;
 logic [7:0] wf_exp_wdata;
 logic       wf_exp_wpush;
+logic [7:0] wf_exp_start_bin;
+logic [8:0] wf_exp_visible_bins;
 logic       wf_mag_wfull;
 logic [7:0] wf_synth_wdata;
 logic       wf_synth_wpush;
@@ -629,8 +684,24 @@ logic [9:0] wf_synth_col;
 logic [15:0] wf_synth_divcnt;
 wire        wf_synth_tick = (wf_synth_divcnt == WF_SYNTH_DIV[15:0] - 16'd1);
 
-assign wf_exp_mul   = {22'd0, wf_exp_col} * 32'd20972; // floor(col * 256 / 800)
-assign wf_exp_display_bin = wf_exp_mul[23:16];
+logic [7:0] shader_spectrum_start_bin;
+logic [8:0] shader_spectrum_visible_bins;
+
+always_comb begin
+    unique case (wf_exp_visible_bins)
+        9'd128: wf_exp_mul_const = 16'd10486;
+        9'd64:  wf_exp_mul_const = 16'd5243;
+        9'd32:  wf_exp_mul_const = 16'd2622;
+        9'd16:  wf_exp_mul_const = 16'd1311;
+        9'd8:   wf_exp_mul_const = 16'd656;
+        default: wf_exp_mul_const = 16'd20972;
+    endcase
+end
+
+assign wf_exp_mul = {22'd0, wf_exp_col} * {16'd0, wf_exp_mul_const};
+assign wf_exp_bin_off = wf_exp_mul[23:16];
+assign wf_exp_bin_sum = {1'b0, wf_exp_start_bin} + {1'b0, wf_exp_bin_off};
+assign wf_exp_display_bin = wf_exp_bin_sum[8] ? 8'hff : wf_exp_bin_sum[7:0];
 assign wf_exp_idx   = wf_exp_display_bin + 8'd128;
 assign wf_exp_wdata = wf_bins[wf_exp_idx];
 assign wf_exp_wpush = (WF_SYNTH_TEST == 0) && wf_exp_active && !wf_mag_wfull;
@@ -641,6 +712,8 @@ always_ff @(posedge CLK or posedge sys_rst) begin
     if (sys_rst) begin
         wf_exp_col <= 10'd0;
         wf_exp_active <= 1'b0;
+        wf_exp_start_bin <= 8'd64;
+        wf_exp_visible_bins <= 9'd128;
         wf_synth_col <= 10'd0;
         wf_synth_divcnt <= 16'd0;
     end else begin
@@ -658,6 +731,8 @@ always_ff @(posedge CLK or posedge sys_rst) begin
         if (!wf_exp_active && wf_wr_valid && bin_index == 8'd255) begin
             wf_exp_active <= 1'b1;
             wf_exp_col <= 10'd0;
+            wf_exp_start_bin <= shader_spectrum_start_bin;
+            wf_exp_visible_bins <= shader_spectrum_visible_bins;
         end else if (wf_exp_wpush) begin
             if (wf_exp_col == WF_LINE_WORDS[9:0] - 10'd1) begin
                 wf_exp_active <= 1'b0;
@@ -1298,128 +1373,51 @@ always_ff @(posedge clk_pix) begin
 end
 
 logic [15:0] shader_pixel;
-logic [15:0] shader_volume_fill;
-logic [1:0]  shader_layout;
-logic [1:0]  shader_demod;
 logic [95:0] shader_freq_text;
+logic [159:0] shader_band_text;
 logic [31:0] shader_demod_label;
 logic [15:0] shader_mode_btn_label;
+logic [15:0] shader_volume_fill;
+logic [7:0] shader_mute_sprite_id;
 logic [15:0] spec_wr_data;
 logic        spec_wr_en;
-assign shader_volume_fill = {8'd0, volume};
+
+ui_status_prepare u_ui_status_prepare (
+    .clk(CLK),
+    .rst(sys_rst),
+    .update(ui_frame_valid),
+    .freq_hz(ui_freq_hz),
+    .span_hz_log2(span_hz_log2),
+    .demod(ui_demod),
+    .volume(ui_volume),
+    .flags(ui_flags),
+    .freq_text(shader_freq_text),
+    .band_text(shader_band_text),
+    .demod_label(shader_demod_label),
+    .mode_btn_label(shader_mode_btn_label),
+    .volume_fill_px(shader_volume_fill),
+    .mute_sprite_id(shader_mute_sprite_id),
+    .spectrum_start_bin(shader_spectrum_start_bin),
+    .spectrum_visible_bins(shader_spectrum_visible_bins)
+);
+
 assign spec_wr_data = {wf_wr_magnitude, 8'd0};
 assign spec_wr_en = bin_valid;
-assign shader_demod = mode[1:0];
-
-always_comb begin
-    // Keep the current spectrum/waterfall surface active while the status text
-    // reflects the live mode. Driving full image layouts here opens the heavy
-    // image-button shader path; that can be revisited once the control path is
-    // proven on hardware.
-    shader_layout = 2'd0;
-end
-
-function automatic logic [7:0] ascii_digit(input logic [3:0] digit);
-    begin
-        ascii_digit = 8'h30 + {4'd0, digit};
-    end
-endfunction
-
-function automatic logic [95:0] format_freq_text(input logic [31:0] hz);
-    logic [31:0] rem;
-    logic [3:0]  tens;
-    logic [3:0]  ones;
-    logic [3:0]  frac_tens;
-    logic [3:0]  frac_ones;
-    logic [7:0]  c [0:11];
-    integer      k;
-    begin
-        rem = hz;
-        c[0] = 8'h20;
-        if (rem >= 32'd100_000_000) begin
-            c[0] = 8'h31; // '1'
-            rem = rem - 32'd100_000_000;
-        end
-
-        tens = 4'd0;
-        for (k = 9; k >= 1; k = k - 1) begin
-            if (rem >= (32'(k) * 32'd10_000_000) && tens == 4'd0) begin
-                tens = 4'(k);
-                rem = rem - (32'(k) * 32'd10_000_000);
-            end
-        end
-
-        ones = 4'd0;
-        for (k = 9; k >= 1; k = k - 1) begin
-            if (rem >= (32'(k) * 32'd1_000_000) && ones == 4'd0) begin
-                ones = 4'(k);
-                rem = rem - (32'(k) * 32'd1_000_000);
-            end
-        end
-
-        frac_tens = 4'd0;
-        for (k = 9; k >= 1; k = k - 1) begin
-            if (rem >= (32'(k) * 32'd100_000) && frac_tens == 4'd0) begin
-                frac_tens = 4'(k);
-                rem = rem - (32'(k) * 32'd100_000);
-            end
-        end
-
-        frac_ones = 4'd0;
-        for (k = 9; k >= 1; k = k - 1) begin
-            if (rem >= (32'(k) * 32'd10_000) && frac_ones == 4'd0) begin
-                frac_ones = 4'(k);
-                rem = rem - (32'(k) * 32'd10_000);
-            end
-        end
-
-        c[1]  = (c[0] != 8'h20 || tens != 4'd0) ? ascii_digit(tens) : 8'h20;
-        c[2]  = ascii_digit(ones);
-        c[3]  = 8'h2e; // '.'
-        c[4]  = ascii_digit(frac_tens);
-        c[5]  = ascii_digit(frac_ones);
-        c[6]  = 8'h20;
-        c[7]  = 8'h4d; // 'M'
-        c[8]  = 8'h48; // 'H'
-        c[9]  = 8'h7a; // 'z'
-        c[10] = 8'h20;
-        c[11] = 8'h20;
-        format_freq_text = {c[11], c[10], c[9], c[8], c[7], c[6],
-                            c[5],  c[4],  c[3], c[2], c[1], c[0]};
-    end
-endfunction
-
-always_comb begin
-    shader_freq_text = format_freq_text(freq_hz);
-    unique case (mode)
-        3'd2: begin
-            shader_demod_label    = 32'h53454f47; // "GOES"
-            shader_mode_btn_label = 16'h4f47;     // "GO"
-        end
-        3'd3: begin
-            shader_demod_label    = 32'h42534441; // "ADSB"
-            shader_mode_btn_label = 16'h4441;     // "AD"
-        end
-        default: begin
-            shader_demod_label    = 32'h20204d46; // "FM  "
-            shader_mode_btn_label = 16'h4d46;     // "FM"
-        end
-    endcase
-end
 
 pixel_shader_top u_pixel_shader (
     .x(shader_x),
     .y(shader_y),
     .fb_under(fb_under),
-    .layout(shader_layout),
-    .demod(shader_demod),
-    .flags({7'd0, mute}),
-    .active_button(8'hff),
-    .touch_x(10'd0),
-    .touch_y(10'd0),
+    .layout(ui_layout),
+    .demod(ui_demod),
+    .flags(ui_flags),
+    .active_button(active_button),
+    .touch_x(touch_x),
+    .touch_y(touch_y),
     .freq_text(shader_freq_text),
+    .band_text(shader_band_text),
     .demod_label(shader_demod_label),
-    .rds_line(192'h202020202020202020202020202020202020202020202020),
+    .rds_line(rds_line),
     .mode_btn_label(shader_mode_btn_label),
     .mode_btn_text_x(16'sd8),
     .mode_btn_text_y(16'sd8),
@@ -1428,7 +1426,9 @@ pixel_shader_top u_pixel_shader (
     .minus_text_x(16'sd16),
     .minus_text_y(16'sd8),
     .volume_fill_px(shader_volume_fill),
-    .mute_sprite_id(mute ? 8'd5 : 8'd15),
+    .mute_sprite_id(shader_mute_sprite_id),
+    .spectrum_start_bin(shader_spectrum_start_bin),
+    .spectrum_visible_bins(shader_spectrum_visible_bins),
     .spec_wr_clk(CLK),
     .spec_wr_en(spec_wr_en),
     .spec_wr_addr(bin_index - 8'd128),

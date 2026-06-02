@@ -4,6 +4,22 @@
 #include "screen_config.h"
 #include "ui_controls.h"
 
+#define STATUS_FREQ_X        4u
+#define STATUS_FREQ_Y        3u
+#define STATUS_RDS_X         4u
+#define STATUS_RDS_Y         32u
+#define STATUS_RDS_CHARS     20u
+#define SPECTRUM_BAND_X      4u
+#define SPECTRUM_BAND_Y      2u
+#define STATUS_VOL_X         204u
+#define STATUS_VOL_Y         6u
+#define STATUS_VOL_W         120u
+#define STATUS_VOL_H         20u
+#define STATUS_VOL_FILL_MAX  (STATUS_VOL_W - 4u)
+#define STATUS_DEMOD_X       332u
+#define STATUS_DEMOD_Y       3u
+#define STATUS_DEMOD_CHARS   2u
+
 // ──────────────────────────────────────────────────────────────────────────────
 // Button layout in the status bar — used by both shader and ui_logic for
 // hit-testing. Kept here so the shader can render highlights without globals.
@@ -201,8 +217,66 @@ static void format_freq_mhz(uint32_t freq_hz, char out[12]) {
     out[11] = ' ';
 }
 
-// Status bar layout: frequency + RDS text at the left, volume/mode in the
-// middle, larger touch buttons packed from the right with MODE rightmost.
+static uint16_t clamp_span_log2(uint16_t span_hz_log2) {
+    if (span_hz_log2 < UI_SPAN_LOG2_MIN) return UI_SPAN_LOG2_MIN;
+    if (span_hz_log2 > UI_SPAN_LOG2_MAX) return UI_SPAN_LOG2_MAX;
+    return span_hz_log2;
+}
+
+static uint32_t span_hz_from_log2(uint16_t span_hz_log2) {
+    span_hz_log2 = clamp_span_log2(span_hz_log2);
+    return 1u << span_hz_log2;
+}
+
+static void format_mhz_3dp(uint32_t hz, char out[7]) {
+    uint32_t khz = hz / 1000u;
+    if (hz % 1000u >= 500u && khz < 0xFFFFFFFFu) khz++;
+
+    uint32_t mhz_int = khz / 1000u;
+    uint32_t frac = khz % 1000u;
+    if (mhz_int > 999u) mhz_int = 999u;
+
+    out[0] = (char)('0' + (mhz_int / 100u) % 10u);
+    out[1] = (char)('0' + (mhz_int / 10u) % 10u);
+    out[2] = (char)('0' + mhz_int % 10u);
+    out[3] = '.';
+    out[4] = (char)('0' + (frac / 100u) % 10u);
+    out[5] = (char)('0' + (frac / 10u) % 10u);
+    out[6] = (char)('0' + frac % 10u);
+}
+
+// Format as "LLL.lll-RRR.rrrMHz  " (20 chars, right-padded).
+static void format_band_text(uint32_t center_hz, uint16_t span_hz_log2,
+                             char out[SHADER_BAND_TEXT_CHARS]) {
+    uint32_t span_hz = span_hz_from_log2(span_hz_log2);
+    uint32_t half = span_hz >> 1;
+    uint32_t lo = center_hz > half ? center_hz - half : 0u;
+    uint32_t hi = (UINT32_MAX - center_hz < half) ? UINT32_MAX : center_hz + half;
+
+    char left[7];
+    char right[7];
+    format_mhz_3dp(lo, left);
+    format_mhz_3dp(hi, right);
+
+    for (uint8_t i = 0; i < SHADER_BAND_TEXT_CHARS; i++) out[i] = ' ';
+    for (uint8_t i = 0; i < 7; i++) out[i] = left[i];
+    out[7] = '-';
+    for (uint8_t i = 0; i < 7; i++) out[8 + i] = right[i];
+    out[15] = 'M';
+    out[16] = 'H';
+    out[17] = 'z';
+}
+
+static void spectrum_window_for_span(uint16_t span_hz_log2,
+                                     uint8_t *out_start,
+                                     uint16_t *out_visible) {
+    (void)span_hz_log2;
+    *out_visible = UI_SPECTRUM_BINS;
+    *out_start = 0u;
+}
+
+// Status bar layout: center frequency + visible band at the left, compact
+// volume/mode in the middle, and touch buttons packed from the right.
 static uint16_t shade_status(uint16_t lx, uint16_t ly, uint16_t w,
                              const shader_state_t *st, const aux_roms_t *roms) {
     const uint16_t bg = RGB565(20, 24, 32);
@@ -213,38 +287,44 @@ static uint16_t shade_status(uint16_t lx, uint16_t ly, uint16_t w,
     (void)w;
 
     // Frequency text in cols 4..4+12*16 = 4..196.
-    if (lx >= 4 && lx < 4 + 12 * 16 && ly >= 3 && ly < 32) {
-        uint16_t col = (uint16_t)(lx - 4);
+    if (lx >= STATUS_FREQ_X && lx < STATUS_FREQ_X + 12 * 16 &&
+        ly >= STATUS_FREQ_Y && ly < 32) {
+        uint16_t col = (uint16_t)(lx - STATUS_FREQ_X);
         uint8_t ch_idx = (uint8_t)(col / 16);
         uint8_t gx = (uint8_t)(col % 16);
-        return glyph_pixel_16x32(st->freq_text[ch_idx], gx, (uint8_t)(ly - 3),
+        return glyph_pixel_16x32(st->freq_text[ch_idx], gx, (uint8_t)(ly - STATUS_FREQ_Y),
                                  fg, bg, roms);
     }
 
-    // Larger RDS/radio-text line, visible only in FM mode.
-    if (st->demod == DEMOD_FM && lx >= 4 && lx < 4 + 24 * 16 && ly >= 32 && ly < 64) {
-        uint16_t col = (uint16_t)(lx - 4);
+    // RDS/status text keeps the second status row free from spectrum zoom UI.
+    if (st->demod == DEMOD_FM &&
+        lx >= STATUS_RDS_X && lx < STATUS_RDS_X + STATUS_RDS_CHARS * 16 &&
+        ly >= STATUS_RDS_Y && ly < 64) {
+        uint16_t col = (uint16_t)(lx - STATUS_RDS_X);
         uint8_t ch_idx = (uint8_t)(col / 16);
         uint8_t gx = (uint8_t)(col % 16);
-        return glyph_pixel_16x32(st->rds_line[ch_idx], gx, (uint8_t)(ly - 32),
+        return glyph_pixel_16x32(st->rds_line[ch_idx], gx, (uint8_t)(ly - STATUS_RDS_Y),
                                  dim, bg, roms);
     }
 
-    // Volume bar at x=220..360, centered on the top text row.
-    if (lx >= 220 && lx < 360 && ly >= 6 && ly < 26) {
-        uint16_t local_x = (uint16_t)(lx - 220);
-        if (lx == 220 || lx == 359 || ly == 6 || ly == 25) return dim;
+    // Volume bar, centered on the top text row.
+    if (lx >= STATUS_VOL_X && lx < STATUS_VOL_X + STATUS_VOL_W &&
+        ly >= STATUS_VOL_Y && ly < STATUS_VOL_Y + STATUS_VOL_H) {
+        uint16_t local_x = (uint16_t)(lx - STATUS_VOL_X);
+        if (lx == STATUS_VOL_X || lx == STATUS_VOL_X + STATUS_VOL_W - 1u ||
+            ly == STATUS_VOL_Y || ly == STATUS_VOL_Y + STATUS_VOL_H - 1u) return dim;
         return (local_x >= 2 && local_x - 2 < st->volume_fill_px)
                ? accent : RGB565(40, 48, 60);
     }
 
-    // Demod label at x=372..436 — four 16x32 glyphs ("FM", "AM", "GOES", "ADSB").
-    if (lx >= 372 && lx < 436 && ly >= 3 && ly < 32) {
-        uint16_t col = (uint16_t)(lx - 372);
+    // FM/AM demod label. Image modes do not have a status bar.
+    if (lx >= STATUS_DEMOD_X && lx < STATUS_DEMOD_X + STATUS_DEMOD_CHARS * 16 &&
+        ly >= STATUS_DEMOD_Y && ly < 32) {
+        uint16_t col = (uint16_t)(lx - STATUS_DEMOD_X);
         uint8_t ch_idx = (uint8_t)(col / 16);
-        if (ch_idx >= 4) return bg;
+        if (ch_idx >= STATUS_DEMOD_CHARS) return bg;
         uint8_t gx = (uint8_t)(col % 16);
-        return glyph_pixel_16x32(st->demod_label[ch_idx], gx, (uint8_t)(ly - 3),
+        return glyph_pixel_16x32(st->demod_label[ch_idx], gx, (uint8_t)(ly - STATUS_DEMOD_Y),
                                  fg, bg, roms);
     }
 
@@ -275,23 +355,43 @@ static uint16_t shade_image_mode_button(uint16_t x, uint16_t y,
 // ──────────────────────────────────────────────────────────────────────────────
 
 static uint16_t shade_spectrum(uint16_t lx, uint16_t ly, uint16_t w, uint16_t h,
-                               const shader_state_t *st) {
+                               const shader_state_t *st, const aux_roms_t *roms) {
     const uint16_t bg = RGB565(10, 14, 22);
     const uint16_t bar = RGB565(120, 220, 140);
     const uint16_t grid = RGB565(30, 40, 60);
+    const uint16_t band_fg = RGB565(165, 205, 225);
+
+    uint16_t visible = st->spectrum_visible_bins;
+    if (visible == 0 || visible > UI_SPECTRUM_BINS) visible = UI_SPECTRUM_BINS;
 
     // TODO_FPGA: replace this divide with a reciprocal LUT keyed on region width.
-    uint16_t bin_idx = (uint16_t)((uint32_t)lx * UI_SPECTRUM_BINS / w);
+    uint16_t bin_idx = (uint16_t)(st->spectrum_start_bin +
+                                  (uint32_t)lx * visible / w);
     if (bin_idx >= UI_SPECTRUM_BINS) bin_idx = UI_SPECTRUM_BINS - 1;
     uint16_t mag = st->spectrum_bins[bin_idx];           // 0..65535
     uint32_t bar_h = ((uint32_t)mag * h) >> 16;          // 0..h
     uint16_t bar_top = (uint16_t)(h - bar_h);
 
     // Horizontal grid lines every 32 px.
-    if ((ly & 0x1F) == 0) return grid;
+    uint16_t base;
+    if ((ly & 0x1F) == 0) base = grid;
+    else if (ly >= bar_top) base = bar;
+    else base = bg;
 
-    if (ly >= bar_top) return bar;
-    return bg;
+    // Current visible RF band. Drawn as a transparent overlay in the spectrum
+    // area so the status row remains available for FM RDS text.
+    if (st->layout == LAYOUT_SPECTRUM_ONLY &&
+        lx >= SPECTRUM_BAND_X && lx < SPECTRUM_BAND_X + SHADER_BAND_TEXT_CHARS * 16 &&
+        ly >= SPECTRUM_BAND_Y && ly < SPECTRUM_BAND_Y + 32u) {
+        uint16_t col = (uint16_t)(lx - SPECTRUM_BAND_X);
+        uint8_t ch_idx = (uint8_t)(col / 16);
+        uint8_t gx = (uint8_t)(col % 16);
+        uint16_t row = font16_row_for(roms, st->band_text[ch_idx],
+                                      (uint8_t)(ly - SPECTRUM_BAND_Y));
+        if ((row & (uint16_t)(1u << (15u - gx))) != 0u) return band_fg;
+    }
+
+    return base;
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -346,10 +446,9 @@ static void copy_mode_btn_label(uint8_t demod, char out[2]) {
 }
 
 static void build_rds_line(const char *rds, char out[24]) {
-    out[0] = 'R'; out[1] = 'D'; out[2] = 'S'; out[3] = ' ';
-    for (uint8_t i = 0; i < 20; i++) {
+    for (uint8_t i = 0; i < 24; i++) {
         char c = rds[i];
-        out[4 + i] = c ? c : ' ';
+        out[i] = c ? c : ' ';
     }
 }
 
@@ -364,17 +463,21 @@ void pixel_shader_prepare(const ui_state_t *ui, const aux_roms_t *roms,
     out->spectrum_bins  = ui->spectrum_bins;
 
     format_freq_mhz(ui->freq_hz, out->freq_text);
+    format_band_text(ui->freq_hz, ui->span_hz_log2, out->band_text);
     copy_demod_label(ui->demod, out->demod_label);
     build_rds_line(ui->rds_text, out->rds_line);
     copy_mode_btn_label(ui->demod, out->mode_btn_label);
+    spectrum_window_for_span(ui->span_hz_log2,
+                             &out->spectrum_start_bin,
+                             &out->spectrum_visible_bins);
 
     label_origin(out->mode_btn_label, 2u, roms,
                  &out->mode_btn_text_x, &out->mode_btn_text_y);
     label_origin("+", 1u, roms, &out->plus_text_x, &out->plus_text_y);
     label_origin("-", 1u, roms, &out->minus_text_x, &out->minus_text_y);
 
-    uint32_t fill = (uint32_t)ui->volume * 136u / 100u;
-    out->volume_fill_px = (uint16_t)(fill > 136u ? 136u : fill);
+    uint32_t fill = (uint32_t)ui->volume * STATUS_VOL_FILL_MAX / 100u;
+    out->volume_fill_px = (uint16_t)(fill > STATUS_VOL_FILL_MAX ? STATUS_VOL_FILL_MAX : fill);
 
     out->mute_sprite_id = (ui->flags & UI_FLAG_MUTE) ? SPR_BTN_MUTE_ON : SPR_BTN_MUTE;
 }
@@ -394,7 +497,7 @@ uint16_t pixel_shader(uint16_t x, uint16_t y,
         base = shade_status((uint16_t)(x - r.x0), (uint16_t)(y - r.y0), r.w, st, roms);
         break;
     case R_SPECTRUM:
-        base = shade_spectrum((uint16_t)(x - r.x0), (uint16_t)(y - r.y0), r.w, r.h, st);
+        base = shade_spectrum((uint16_t)(x - r.x0), (uint16_t)(y - r.y0), r.w, r.h, st, roms);
         break;
     case R_WATERFALL:
     case R_GOES:

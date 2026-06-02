@@ -345,7 +345,14 @@ shader is a complete synthesizable block and the budget is verified. The next
 meaty piece is **#12 (UI state shadow + SPI opcode parser)**, which feeds the
 wrapper's prepared-state ports and unblocks everything from #18.
 
-#12 has a real design fork to settle first: **who runs
+> **Update (2026-06-02):** the active FM/AM display top now has a reduced #12:
+> `ui_wire_rx.sv` CRC-validates `0xA5` `OP_FULL_STATE`/`OP_PARTIAL_STATE`
+> frames for the live display fields, and `ui_status_prepare.sv` prepares the
+> frequency/band text; spectrum/waterfall now consume the full 256-bin FFT row,
+> with FM/AM zoom handled by the FFT input decimator. The full 1 KB
+> double-buffered UI shadow remains the target for image-mode payloads.
+
+#12's full-shadow version still has a design fork to settle: **who runs
 `pixel_shader_prepare()`?** The wire protocol (`wire_pack_full`) currently sends
 raw `ui_state_t` (freq_hz, volume, rds_text, …), but the wrapper's inputs are
 the *prepared* fields (freq_text, label origins, volume_fill_px, …). Either:
@@ -354,7 +361,8 @@ the *prepared* fields (freq_text, label origins, volume_fill_px, …). Either:
   (b) the **FPGA** stores raw `ui_state` and a small V-blank "prepare engine"
       computes the derived fields in hardware (keeps the contract, but
       `format_freq_mhz` division + the `label_origin` glyph scan become gateware).
-Decide this before writing #12.
+The reduced active path chose (b) for the fields it needs, but it does not yet
+replace the planned coherent 1 KB shadow.
 
 Anything beyond that needs at least the mock SDRAM (#13) so #14/#15 can be
 developed against it. At #18, register the ROM reads (sync-read EBR, arch §9) —

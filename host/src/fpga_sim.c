@@ -80,9 +80,12 @@ void fpga_sim_tick(fpga_sim_t *s, uint16_t *pixels_out) {
     }
 
     // Compositor side: synth_data is the stand-in for the Zynq DSP feed.
-    uint8_t mags[800];
-    synth_waterfall_row(mags);
-    fb_compose_waterfall_step(&s->fb, s->shadow_front.layout, mags, palette_waterfall);
+    uint16_t spectrum_bins[UI_SPECTRUM_BINS];
+    memcpy(spectrum_bins, s->shadow_front.spectrum_bins, sizeof(spectrum_bins));
+    fb_compose_waterfall_spectrum_step(&s->fb, s->shadow_front.layout,
+                                       spectrum_bins,
+                                       s->shadow_front.span_hz_log2,
+                                       palette_waterfall);
 
     uint8_t goes[800];
     if (synth_goes_row_ready(goes)) {

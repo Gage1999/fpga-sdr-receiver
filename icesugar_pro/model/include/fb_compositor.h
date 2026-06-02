@@ -19,6 +19,15 @@ void fb_compose_waterfall_step(fb_t *fb,
                                const uint8_t magnitudes[800],
                                const uint16_t palette[256]);
 
+// Same visual append operation, but source the new row from the current
+// 256-bin spectrum buffer. Older waterfall rows are left as-is; only the
+// appended top row reflects the current DSP-side spectrum span.
+void fb_compose_waterfall_spectrum_step(fb_t *fb,
+                                        uint8_t layout,
+                                        const uint16_t spectrum_bins[UI_SPECTRUM_BINS],
+                                        uint16_t span_hz_log2,
+                                        const uint16_t palette[256]);
+
 // Writes one GOES row into the GOES region at row_y_in_region (0..region_h-1).
 // Pixels are 0..255 grayscale; the compositor expands through the GOES palette
 // and downsamples the source row into a square 480x480 image area.

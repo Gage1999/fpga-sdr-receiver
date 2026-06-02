@@ -37,6 +37,7 @@ void drive_state(Vpixel_shader_top *dut, const shader_state_t *st) {
     dut->touch_y       = st->touch_y;
 
     std::memcpy(&dut->freq_text,      st->freq_text,      sizeof(st->freq_text));
+    std::memcpy(&dut->band_text,      st->band_text,      sizeof(st->band_text));
     std::memcpy(&dut->demod_label,    st->demod_label,    sizeof(st->demod_label));
     std::memcpy(&dut->rds_line,       st->rds_line,       sizeof(st->rds_line));
     std::memcpy(&dut->mode_btn_label, st->mode_btn_label, sizeof(st->mode_btn_label));
@@ -50,6 +51,8 @@ void drive_state(Vpixel_shader_top *dut, const shader_state_t *st) {
 
     dut->volume_fill_px  = st->volume_fill_px;
     dut->mute_sprite_id  = st->mute_sprite_id;
+    dut->spectrum_start_bin = st->spectrum_start_bin;
+    dut->spectrum_visible_bins = st->spectrum_visible_bins;
 }
 
 // Clock the 256 magnitude bins into spectrum_bin_ram via the write port.

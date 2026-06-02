@@ -120,6 +120,8 @@ task automatic spi_send_full_state(
             5: b = freq_hz[15:8];
             6: b = freq_hz[23:16];
             7: b = freq_hz[31:24];
+            8: b = 8'd17;
+            9: b = 8'd0;
             11: b = flags;
             16: b = 8'hff;
             17: b = 8'd80;
