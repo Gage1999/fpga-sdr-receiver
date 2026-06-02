@@ -1,29 +1,26 @@
 # icesugar_pro/
 
-SystemVerilog for the iCESugar-Pro (ECP5-25K) — the screen/rendering subsystem.
+SystemVerilog for the iCESugar-Pro (ECP5-25K) display, SDRAM, waterfall, and
+audio subsystem.
 
-- `src/` — the SystemVerilog modules. The current FM bitstream is built:
-  SPI IQ ingest, `fft256` → `waterfall_buf`, FM demod → `i2s_tx`, and the LCD
-  driver (`top.sv`). See [../docs/fpga-sdr-receiver-interface.md](../docs/fpga-sdr-receiver-interface.md)
-  for the link/dataflow, and [../docs/fpga-sdr-receiver-architecture.md](../docs/fpga-sdr-receiver-architecture.md)
-  for the (not-yet-built) SDRAM-backed renderer the image modes need.
-- `model/` — the **C reference model**: `pixel_shader.c`, `fb_compositor.c`,
-  `regions.c`, and the font/sprite/palette ROMs. This defines, bit-for-bit, what
-  the SystemVerilog in `src/` must compute. It's portable C, built by the host
-  harness and the `tests/` golden suite so the spec is exercised before any SV
-  exists. The Pico firmware does not use it — it depends only on `shared/`.
+- `src/` contains the SystemVerilog modules. The normal `top.sv` build ingests
+  TLV-framed SPI IQ, runs the FFT/waterfall path through the SDRAM-backed
+  compositor, demodulates FM audio, and drives the LCD plus I2S DAC.
+- `model/` contains the C reference model: `pixel_shader.c`,
+  `fb_compositor.c`, `regions.c`, and the font/sprite/palette ROMs. This
+  defines what the SystemVerilog in `src/` should compute and provides golden
+  behavior for host-side tests.
 
-## Bring-up order (mirrors architecture doc §10)
+## Current Build Targets
 
-1. SDRAM controller standalone
-2. SDRAM + scan-out reader → solid color FB → display
-3. Line cache + arbiter → scrolling test pattern
-4. UI state shadow + Pico SPI slave → live touch cursor overlay
-5. Font/sprite ROMs + status bar shader
-6. Compositor `waterfall_step` (FM waterfall mode)
-7. Pluto SPI ingest
-8. Image-mode paths: GOES satellite image and ADS-B map (both slow-update,
-   single-buffered; only the waterfall needs the back buffer)
+- `make prog`: integrated TLV-IQ build. Pair with `plutosky make radio-run` or
+  `plutosky make synth-fm-run`.
+- `make prog_fm_audio_test`: minimal FM audio diagnostic without the LCD/SDRAM
+  display stack.
+- `make prog_sdram_test`: basic SDRAM controller write/read diagnostic.
+
+The current waterfall compositor uses a grayscale palette. Color waterfall
+mapping is still a pending integration task.
 
 ## Verilator parity tests (planned)
 
@@ -33,9 +30,8 @@ When SV modules exist, add `icesugar_pro/sim/` testbenches that:
 
 ## ROM .mem files
 
-The current FM RTL uses the model's 8x16 font ROM for the on-screen sample-rate
-status text. The IceSugar `Makefile` generates `build/font_8x16.mem`
-automatically before simulation or synthesis.
+The display shader uses generated font and sprite ROM memories. The IceSugar
+`Makefile` generates them automatically before simulation or synthesis.
 
 Regenerate the ROMs manually with:
 
@@ -56,9 +52,8 @@ placeholder (range rings + marker).
 
 ## SDRAM controller
 
-We need an SDRAM controller regardless of render mode. The professor's
+The integrated top now uses the local SDRAM controller with the arbiter,
+compositor, scan-out, and line-cache stack. The professor's
 [icesugar-pro-framebuffer](https://github.com/UCR-CS122A/icesugar-pro-framebuffer)
-demo (LVGL into a CPU-driven framebuffer) is **not** our architecture — we render
-on the FPGA, not from a soft CPU — but its SDRAM controller / PHY for this exact
-board is a useful reference for steps 1–2 above. See the architecture doc for why
-the rest of that demo's approach doesn't fit.
+demo remains a useful board reference, but this project renders in FPGA logic
+rather than through a soft CPU framebuffer.

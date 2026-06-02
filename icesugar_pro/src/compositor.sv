@@ -52,6 +52,7 @@ module compositor #(
     // returns stale data on silicon. So register the read explicitly and add a fetch cycle
     // (S_FETCH) so the FSM accounts for the 1-cycle latency; sim and hardware then match.
     logic [15:0] linebuf_q;
+    logic [15:0] wr_pipe;
 
     typedef enum logic [2:0] { S_FILL, S_REQ, S_FETCH, S_WRITE, S_WAIT } state_e;
     state_e st;
@@ -83,7 +84,7 @@ module compositor #(
     assign req_wr   = 1'b1;
     assign req_addr = (25'(cur_word / RW) << 10) | (25'(col_w) << 1);
     assign req_len  = seg_r[9:0];
-    assign wr_data  = linebuf_q;
+    assign wr_data  = wr_pipe;
     assign busy     = (st != S_FILL) || (fill_cnt != 11'd0);
 
     always_ff @(posedge clk) begin
@@ -98,6 +99,7 @@ module compositor #(
             wf_base_row  <= 9'd0;
             req_valid    <= 1'b0;
             wr_valid     <= 1'b0;
+            wr_pipe      <= 16'd0;
         end else begin
             case (st)
                 S_FILL: begin
@@ -129,8 +131,12 @@ module compositor #(
                     beats     <= 10'd0;
                     if (req_valid && req_ready) begin
                         req_valid <= 1'b0;
-                        // linebuf_q already holds linebuf[rd_ptr] (rd_ptr stable through S_REQ),
-                        // so the first beat can present immediately.
+                        // linebuf_q already holds linebuf[rd_ptr]. Save it as beat 0, then
+                        // pre-address beat 1 during the controller's RCD/CAS delay. Once the
+                        // SDRAM WRITE starts, data must be continuous; the chip cannot pause
+                        // for the line-buffer read latency.
+                        wr_pipe  <= linebuf_q;
+                        rd_ptr   <= rd_ptr + 10'd1;
                         wr_valid  <= 1'b1;
                         st        <= S_WRITE;
                     end
@@ -147,15 +153,13 @@ module compositor #(
                     if (wr_ready && wr_valid) begin
                         if (beats == seg_r[9:0] - 10'd1) begin
                             wr_valid   <= 1'b0;
-                            rd_ptr     <= rd_ptr + 10'd1;
                             cur_word   <= cur_word + 19'(seg_r);
                             words_left <= words_left - seg_r;
                             st         <= S_WAIT;
                         end else begin
-                            rd_ptr <= rd_ptr + 10'd1;  // advance; S_FETCH lets linebuf_q catch up
-                            beats  <= beats + 10'd1;
-                            wr_valid <= 1'b0;
-                            st     <= S_FETCH;
+                            wr_pipe <= linebuf_q;
+                            rd_ptr  <= rd_ptr + 10'd1;
+                            beats   <= beats + 10'd1;
                         end
                     end
                 end

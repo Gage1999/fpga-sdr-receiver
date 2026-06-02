@@ -107,7 +107,10 @@ JP5 pins, Bank 13 LVCMOS33
 iCeSugar Pro CS0 SPI receiver
   │
   ▼
-FFT/waterfall and FM demod/audio
+TLV-IQ unpacking
+  │
+  ▼
+FFT/waterfall through SDRAM display stack, plus FM demod/audio
 ```
 
 ---

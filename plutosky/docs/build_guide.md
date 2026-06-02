@@ -235,10 +235,10 @@ Current useful iCeSugar targets:
 | `make prog_fm_audio_test` | Hardware-proven minimal FM audio path |
 | `make prog_fm_audio_tone_test` | I2S/DAC diagnostic tone using the FM audio clocking |
 | `make prog_fm_audio_iq_test` | FPGA-generated FM IQ through the demod/audio path |
-| `make prog_tlv` | Full build with TLV-framed IQ input enabled |
+| `make prog_sdram_test` | Basic SDRAM controller write/read diagnostic |
 | `make prog_tlv_link_test` | TLV receive/link diagnostic |
 
-For the current FM audio baseline, use:
+For isolated FM audio debugging, use:
 
 ```powershell
 make prog_fm_audio_test
@@ -254,6 +254,7 @@ From `icesugar_pro/`:
 make sim_fm
 make sim_lcd
 make sim_fft
+make sim_integration
 ```
 
 The LCD simulation may print Icarus warnings about constant selects in
@@ -318,11 +319,11 @@ This should pass all register checks.
 
 ## 13. Board-Level SPI And Waterfall Tests
 
-First program the iCeSugar with the normal or debug bitstream:
+First program the iCeSugar with the normal integrated bitstream:
 
 ```powershell
 cd icesugar_pro
-make prog_fm_audio_test
+make prog
 ```
 
 Then run the simple PlutoSky IQ test:
@@ -335,10 +336,11 @@ make test-run TEST=longtone
 Expected LCD result:
 
 ```text
-Two distinct thin red bands surrounded by mostly black.
+Visible waterfall/spectrum activity from the known IQ pattern.
 ```
 
 If this fails, check the physical SPI wiring before debugging the SDR pipeline.
+For a display-only receive diagnostic, `make prog_spi_rx_test` is also useful.
 
 Current iCeSugar CS0 landing pins:
 
@@ -352,18 +354,24 @@ Current iCeSugar CS0 landing pins:
 
 ## 14. Current Synthetic FM Test
 
-The current external synthetic FM test uses the standalone FM audio bitstream
-and the paced PlutoSky streamer:
+The main integrated build uses TLV-framed IQ, the SDRAM-backed display path,
+FFT, waterfall, FM demodulator, and I2S audio:
 
 ```powershell
 cd icesugar_pro
-make prog_fm_audio_test
+make prog
 
 cd ..\plutosky
 make synth-fm-run
 ```
 
-This should produce a clean tone. If it does not, compare against
+This should produce a clean tone and a centered waterfall/spectrum response.
+The current compositor palette is grayscale; color waterfall lookup is still a
+separate integration item.
+
+`make synth-fm-run` sends TLV_IQ packets.
+
+If synthetic FM does not produce clean audio, compare against
 `prog_fm_audio_iq_test` to separate Pluto/SPI delivery from FPGA demod/audio.
 
 For display-only SPI sanity, this conservative command is also useful:
@@ -378,11 +386,11 @@ Per-word CS is reliable for wiring/debug, but it is too slow for clean FM audio.
 
 ## 15. Live FM Test Starting Point
 
-Standalone live FM uses the minimal audio build:
+Live FM uses the normal integrated TLV build:
 
 ```powershell
 cd icesugar_pro
-make prog_fm_audio_test
+make prog
 ```
 
 Then try PlutoSky live FM mode:
@@ -395,22 +403,9 @@ make radio-run FREQ_MHZ=95.1
 Notes:
 
 - Change `--freq-mhz` to a strong local FM station.
-- `radio-run` keeps the Pluto output rate matched to `prog_fm_audio_test`.
+- `radio-run` sends TLV_IQ packets and must be paired with `make prog`.
 - Use `make stream-run STREAM_ARGS="..."` only when you need to override IQ
   shift, DC removal, bandwidth, or duration manually.
-
-For the integrated main project with TLV-framed IQ, use:
-
-```powershell
-cd icesugar_pro
-make prog_tlv
-
-cd ..\plutosky
-make tlv-radio-run FREQ_MHZ=95.1
-```
-
-This path keeps the same audio timing as `prog_fm_audio_test`, but sends live
-IQ as TLV_IQ packets through `spi_frame_rx -> tlv_demux -> tlv_iq_sink`.
 
 ---
 
@@ -421,6 +416,7 @@ IQ as TLV_IQ packets through `spi_frame_rx -> tlv_demux -> tlv_iq_sink`.
 - Per-word CS is too slow for audio-rate FM.
 - The FM audio path relies on a large FPGA IQ FIFO/preroll to absorb
   Pluto/Linux userspace timing jitter.
-- The integrated TLV build keeps the audio FIFO depth and reduces waterfall
-  history to fit the 25k device block-RAM budget.
+- The integrated display path now uses SDRAM for the waterfall/framebuffer
+  stack. The current waterfall palette is grayscale until the color LUT is
+  wired into the compositor.
 
