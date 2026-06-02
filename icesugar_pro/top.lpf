@@ -61,13 +61,14 @@ LOCATE COMP "cs" SITE "R3";
 IOBUF PORT "cs" IO_TYPE=LVCMOS33;
 
 # SPI CS1: Pico 2W command channel
-LOCATE COMP "spi_clk_pico" SITE "B11";
+# P5 header: D12=SCK, C11=MOSI, D13=CS
+LOCATE COMP "spi_clk_pico" SITE "D12";
 IOBUF PORT "spi_clk_pico" IO_TYPE=LVCMOS33;
 
 LOCATE COMP "mosi_pico" SITE "C11";
 IOBUF PORT "mosi_pico" IO_TYPE=LVCMOS33;
 
-LOCATE COMP "cs1" SITE "D11";
+LOCATE COMP "cs1" SITE "D13";
 IOBUF PORT "cs1" IO_TYPE=LVCMOS33;
 
 # I2S DAC (PCM5102A direct-plug pinout)

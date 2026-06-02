@@ -98,12 +98,12 @@ after logic-analyzer validation.
 
 Recommended Pico 2W pins avoid the GT911 I²C pins (GP4/GP5):
 
-| Signal | Pico 2W | ECP5 pin |
-|---|---|---|
-| SCK  | GP18 / SPI0 SCK | B11 (`spi_clk_pico`) |
-| MOSI | GP19 / SPI0 TX  | C11 (`mosi_pico`) |
-| CS   | GP17 / GPIO output | D11 (`cs1`) |
-| GND  | any GND | any GND |
+| Signal | Pico 2W | iCESugar-Pro header | ECP5 pin |
+|---|---|---|---|
+| SCK  | GP18 / SPI0 SCK | P5 | D12 (`spi_clk_pico`) |
+| MOSI | GP19 / SPI0 TX  | P5 | C11 (`mosi_pico`) |
+| CS   | GP17 / GPIO output | P5 | D13 (`cs1`) |
+| GND  | any GND | P5 | GND |
 
 GP16 / SPI0 RX is unused and should be left unconnected unless a future readback
 path is added.

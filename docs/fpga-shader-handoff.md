@@ -257,8 +257,8 @@ Partially implemented; *not* deployment-ready.
   `0x5D` on i2c0 GP4/GP5; panel orientation needs hardware validation.
 - ✅ `CMakeLists.txt` — Pico SDK import/init path is wired when
   `BUILD_FIRMWARE=ON`.
-- ⚠️ `main.c` / `hal_pico.c` — tick loop and touch polling are wired, but SPI
-  still needs actual Pico pin setup, CS framing, and hardware validation.
+- ⚠️ `main.c` / `hal_pico.c` — tick loop, touch polling, SPI pin setup, and
+  CS framing are wired; SPI still needs hardware validation.
 
 Pico bring-up is a parallel track. Estimated 2–3 focused sessions with
 the board in hand. Not blocking any FPGA-side work.

@@ -472,7 +472,7 @@ Keyboard equivalents (for scripted tests and laptop use without a touchscreen):
 ## 13. What we're explicitly NOT building yet
 
 - Real Goodix I²C driver hardware validation. `pico2w/src/touch_goodix.c` now polls the **GT911 @ `0x5D`**; panel orientation still needs board validation.
-- Real Pico SPI pin/CS setup and optional DMA. Blocking writes are fine for first bring-up; DMA can come after the link is proven.
+- Real Pico SPI hardware validation and optional DMA. Blocking writes are fine for first bring-up; DMA can come after the link is proven.
 - Zynq-side anything; `synth_data.c` feeds magnitudes/GOES.
 - Audio path. Out of scope for the frontend harness.
 - SDRAM controller, line-buffer cache, arbiter — all modeled as "a flat array" on host. Real implementation is in the architecture doc, built on the gateware side later.

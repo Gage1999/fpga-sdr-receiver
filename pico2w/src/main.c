@@ -6,7 +6,6 @@
 
 #ifdef TRIAD_FIRMWARE
 #include "pico/stdlib.h"
-#include "hardware/spi.h"
 
 #include "hal_pico.h"
 #include "touch_goodix.h"
@@ -14,7 +13,7 @@
 
 int main(void) {
     stdio_init_all();
-    spi_init(spi0, 8 * 1000 * 1000);  // 8 MHz; tune during bring-up
+    hal_spi_init();
     touch_goodix_init();
 
     ui_logic_t L;
