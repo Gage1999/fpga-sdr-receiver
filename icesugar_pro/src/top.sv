@@ -448,12 +448,48 @@ logic [31:0] rx_sps_bcd_next;
 logic [RX_SPS_CLK_W-1:0] rx_sps_clk_count;
 
 localparam [4:0] WF_FRAME_DECIM = 5'd31;
+localparam int FFT_DC_SHIFT = 11;
+
+logic signed [23:0] fft_dc_i;
+logic signed [23:0] fft_dc_q;
+logic signed [16:0] fft_i_hp_wide;
+logic signed [16:0] fft_q_hp_wide;
+logic signed [15:0] fft_i_in;
+logic signed [15:0] fft_q_in;
+
+function automatic logic signed [15:0] sat17_to_16(input logic signed [16:0] x);
+    begin
+        if (x > 17'sd32767)
+            sat17_to_16 = 16'sd32767;
+        else if (x < -17'sd32768)
+            sat17_to_16 = -16'sd32768;
+        else
+            sat17_to_16 = x[15:0];
+    end
+endfunction
+
+always_ff @(posedge CLK or posedge sys_rst) begin
+    if (sys_rst) begin
+        fft_dc_i <= '0;
+        fft_dc_q <= '0;
+    end else if (sys_iq_valid) begin
+        fft_dc_i <= fft_dc_i + (({{8{sys_i[15]}}, sys_i} - fft_dc_i) >>> FFT_DC_SHIFT);
+        fft_dc_q <= fft_dc_q + (({{8{sys_q[15]}}, sys_q} - fft_dc_q) >>> FFT_DC_SHIFT);
+    end
+end
+
+always_comb begin
+    fft_i_hp_wide = $signed({sys_i[15], sys_i}) - $signed(fft_dc_i[16:0]);
+    fft_q_hp_wide = $signed({sys_q[15], sys_q}) - $signed(fft_dc_q[16:0]);
+    fft_i_in = sat17_to_16(fft_i_hp_wide);
+    fft_q_in = sat17_to_16(fft_q_hp_wide);
+end
 
 fft256 u_fft (
     .clk (CLK),
     .rst (sys_rst),
-    .i_in (sys_i),
-    .q_in (sys_q),
+    .i_in (fft_i_in),
+    .q_in (fft_q_in),
     .in_valid (sys_iq_valid),
     .bin_magnitude (bin_magnitude),
     .bin_index (bin_index),
