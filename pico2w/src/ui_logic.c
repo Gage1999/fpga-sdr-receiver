@@ -126,6 +126,35 @@ static const char *button_name(uint8_t btn) {
     }
 }
 
+static const char *touch_kind_name(uint8_t kind) {
+    switch (kind) {
+    case TOUCH_DOWN:    return "down";
+    case TOUCH_MOVE:    return "move";
+    case TOUCH_UP:      return "up";
+    case TOUCH_TAP:     return "tap";
+    case TOUCH_LONG:    return "long";
+    case TOUCH_SWIPE_L: return "swipe_l";
+    case TOUCH_SWIPE_R: return "swipe_r";
+    case TOUCH_SWIPE_U: return "swipe_u";
+    case TOUCH_SWIPE_D: return "swipe_d";
+    default:            return "unknown";
+    }
+}
+
+static void log_touch_decision(const ui_logic_t *L, const touch_event_t *ev,
+                               uint8_t btn) {
+    if (ev->kind != TOUCH_DOWN && ev->kind != TOUCH_UP && ev->kind != TOUCH_TAP)
+        return;
+
+    hal_log("[touch] %-4s x=%u y=%u layout=%u btn=%s(%u)\n",
+            touch_kind_name(ev->kind),
+            (unsigned)ev->x,
+            (unsigned)ev->y,
+            (unsigned)L->curr.layout,
+            button_name(btn),
+            (unsigned)btn);
+}
+
 static void action_button_press(ui_logic_t *L, uint8_t btn) {
     switch (btn) {
     case UI_BTN_FREQ_UP:
@@ -185,6 +214,7 @@ static void handle_touch(ui_logic_t *L, const touch_event_t *ev) {
         L->curr.touch_y = ev->y;
         L->curr.flags |= UI_FLAG_TOUCH_ACTIVE;
         uint8_t btn = hit_button(L, ev->x, ev->y);
+        log_touch_decision(L, ev, btn);
         L->curr.active_button = btn;
         break;
     }
@@ -202,6 +232,7 @@ static void handle_touch(ui_logic_t *L, const touch_event_t *ev) {
         L->touch_is_down = 0;
         // If we released inside the originally-pressed button, fire it.
         uint8_t btn = hit_button(L, ev->x, ev->y);
+        log_touch_decision(L, ev, btn);
         if (btn != UI_BTN_NONE && btn == L->curr.active_button) {
             action_button_press(L, btn);
         }
@@ -211,6 +242,7 @@ static void handle_touch(ui_logic_t *L, const touch_event_t *ev) {
     }
     case TOUCH_TAP: {
         uint8_t btn = hit_button(L, ev->x, ev->y);
+        log_touch_decision(L, ev, btn);
         if (btn != UI_BTN_NONE) action_button_press(L, btn);
         break;
     }

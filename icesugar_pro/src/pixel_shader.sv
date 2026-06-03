@@ -90,6 +90,11 @@ module pixel_shader (
     localparam logic [9:0] STATUS_DEMOD_X      = 10'd332;
     localparam logic [9:0] STATUS_DEMOD_Y      = 10'd3;
     localparam logic [1:0] STATUS_DEMOD_CHARS  = 2'd2;
+    localparam logic [9:0] UI_STATUS_BTN_W     = 10'd48;
+    localparam logic [9:0] UI_STATUS_BTN_GAP   = 10'd6;
+    localparam logic [9:0] UI_STATUS_BTN_STEP  = UI_STATUS_BTN_W + UI_STATUS_BTN_GAP;
+    localparam logic [9:0] UI_STATUS_BTN_TOP   = 10'd8;
+    localparam logic [9:0] UI_STATUS_BTN_BOT   = UI_STATUS_BTN_TOP + UI_STATUS_BTN_W;
 
     localparam int UI_FLAG_TOUCH_ACTIVE_BIT = 2;
 
@@ -131,6 +136,49 @@ module pixel_shader (
     localparam logic [15:0] CROSSHAIR_DOT = 16'hFA8A;
 
     // ── region_at ────────────────────────────────────────────────────────
+    function automatic logic [3:0] ui_button_slot_sv(input logic [2:0] btn);
+        begin
+            unique case (btn)
+                BTN_MODE:     ui_button_slot_sv = 4'd0;
+                BTN_ZOOM_IN:  ui_button_slot_sv = 4'd1;
+                BTN_ZOOM_OUT: ui_button_slot_sv = 4'd2;
+                BTN_MUTE:     ui_button_slot_sv = 4'd3;
+                BTN_VOL_DN:   ui_button_slot_sv = 4'd4;
+                BTN_VOL_UP:   ui_button_slot_sv = 4'd5;
+                BTN_FREQ_DN:  ui_button_slot_sv = 4'd6;
+                BTN_FREQ_UP:  ui_button_slot_sv = 4'd7;
+                default:      ui_button_slot_sv = 4'hf;
+            endcase
+        end
+    endfunction
+
+    function automatic logic [9:0] ui_button_x0_sv(input logic [2:0] btn);
+        logic [3:0] slot;
+        begin
+            slot = ui_button_slot_sv(btn);
+            if (slot == 4'hf)
+                ui_button_x0_sv = SCREEN_W;
+            else
+                ui_button_x0_sv = SCREEN_W - ({6'd0, slot} + 10'd1) * UI_STATUS_BTN_STEP;
+        end
+    endfunction
+
+    function automatic logic ui_button_visible_sv(input logic [1:0] layout_in,
+                                                  input logic [2:0] btn);
+        begin
+            unique case (layout_in)
+                LAYOUT_GOES_FULL:
+                    ui_button_visible_sv = (btn == BTN_MODE);
+                LAYOUT_ADSB_FULL:
+                    ui_button_visible_sv = (btn == BTN_MODE)
+                                        || (btn == BTN_ZOOM_IN)
+                                        || (btn == BTN_ZOOM_OUT);
+                default:
+                    ui_button_visible_sv = 1'b1;
+            endcase
+        end
+    endfunction
+
     logic [2:0] region_kind;
     logic       in_screen;
     assign in_screen = (x < SCREEN_W) && (y < SCREEN_H);
@@ -151,22 +199,18 @@ module pixel_shader (
     end
 
     // ── shade_spectrum ──────────────────────────────────────────────────
-    logic [31:0] bin_idx_mul;
-    logic [15:0] bin_mul_const;
     logic [7:0]  span_bin_off;
     logic [8:0]  span_bin_sum;
     always_comb begin
         unique case (spectrum_visible_bins)
-            9'd128: bin_mul_const = 16'd10486;
-            9'd64:  bin_mul_const = 16'd5243;
-            9'd32:  bin_mul_const = 16'd2622;
-            9'd16:  bin_mul_const = 16'd1311;
-            9'd8:   bin_mul_const = 16'd656;
-            default: bin_mul_const = 16'd20972; // 256 visible bins
+            9'd128: span_bin_off = x[9:3] + x[9:5] + x[9:8];
+            9'd64:  span_bin_off = x[9:4] + x[9:6] + {7'd0, x[9]};
+            9'd32:  span_bin_off = x[9:5] + x[9:7];
+            9'd16:  span_bin_off = x[9:6] + x[9:8];
+            9'd8:   span_bin_off = {5'd0, x[9:7]} + ((x >= 10'd700) ? 8'd1 : 8'd0);
+            default: span_bin_off = x[9:2] + x[9:4] + x[9:7]; // ~= x * 256 / 800
         endcase
     end
-    assign bin_idx_mul = {22'b0, x} * {16'b0, bin_mul_const};
-    assign span_bin_off = bin_idx_mul[23:16];
     assign span_bin_sum = {1'b0, spectrum_start_bin} + {1'b0, span_bin_off};
     assign spectrum_bin_addr = span_bin_sum[8] ? 8'hff : span_bin_sum[7:0];
 
@@ -221,21 +265,23 @@ module pixel_shader (
     logic       in_button;
     logic [2:0] hit_btn_id;
     logic [9:0] hit_btn_x0;
+    logic [9:0] scan_btn_x0_status;
 
     always_comb begin
         in_button  = 1'b0;
         hit_btn_id = 3'd0;
         hit_btn_x0 = 10'd0;
+        scan_btn_x0_status = 10'd0;
         if (layout == LAYOUT_SPECTRUM_ONLY
-            && ly_st >= 10'd8 && ly_st < 10'd56) begin
-            if      (lx_st >= 10'd368 && lx_st < 10'd416) begin in_button=1; hit_btn_id=BTN_FREQ_UP;  hit_btn_x0=10'd368; end
-            else if (lx_st >= 10'd422 && lx_st < 10'd470) begin in_button=1; hit_btn_id=BTN_FREQ_DN;  hit_btn_x0=10'd422; end
-            else if (lx_st >= 10'd476 && lx_st < 10'd524) begin in_button=1; hit_btn_id=BTN_VOL_UP;   hit_btn_x0=10'd476; end
-            else if (lx_st >= 10'd530 && lx_st < 10'd578) begin in_button=1; hit_btn_id=BTN_VOL_DN;   hit_btn_x0=10'd530; end
-            else if (lx_st >= 10'd584 && lx_st < 10'd632) begin in_button=1; hit_btn_id=BTN_MUTE;     hit_btn_x0=10'd584; end
-            else if (lx_st >= 10'd638 && lx_st < 10'd686) begin in_button=1; hit_btn_id=BTN_ZOOM_OUT; hit_btn_x0=10'd638; end
-            else if (lx_st >= 10'd692 && lx_st < 10'd740) begin in_button=1; hit_btn_id=BTN_ZOOM_IN;  hit_btn_x0=10'd692; end
-            else if (lx_st >= 10'd746 && lx_st < 10'd794) begin in_button=1; hit_btn_id=BTN_MODE;    hit_btn_x0=10'd746; end
+            && ly_st >= UI_STATUS_BTN_TOP && ly_st < UI_STATUS_BTN_BOT) begin
+            for (int i = 0; i < 8; i++) begin
+                scan_btn_x0_status = ui_button_x0_sv(i[2:0]);
+                if (lx_st >= scan_btn_x0_status && lx_st < scan_btn_x0_status + UI_STATUS_BTN_W) begin
+                    in_button  = 1'b1;
+                    hit_btn_id = i[2:0];
+                    hit_btn_x0 = scan_btn_x0_status;
+                end
+            end
         end
     end
 
@@ -246,6 +292,7 @@ module pixel_shader (
     logic       in_img_button;
     logic [2:0] img_btn_id;
     logic [9:0] img_btn_x0;
+    logic [9:0] scan_btn_x0_img;
 
     assign in_img_layout = (layout == LAYOUT_GOES_FULL)
                         || (layout == LAYOUT_ADSB_FULL);
@@ -254,23 +301,16 @@ module pixel_shader (
         in_img_button = 1'b0;
         img_btn_id    = 3'd0;
         img_btn_x0    = 10'd0;
-        if (in_img_layout && y >= 10'd8 && y < 10'd56) begin
+        scan_btn_x0_img = 10'd0;
+        if (in_img_layout && y >= UI_STATUS_BTN_TOP && y < UI_STATUS_BTN_BOT) begin
             // MODE: visible in both image layouts (slot 0 → x0 = 746)
-            if (x >= 10'd746 && x < 10'd794) begin
-                in_img_button = 1'b1;
-                img_btn_id    = BTN_MODE;
-                img_btn_x0    = 10'd746;
-            end
-            // ZOOM_IN / ZOOM_OUT: ADSB only (slot 1 = 692, slot 2 = 638)
-            else if (layout == LAYOUT_ADSB_FULL) begin
-                if (x >= 10'd692 && x < 10'd740) begin
+            for (int i = 0; i < 8; i++) begin
+                scan_btn_x0_img = ui_button_x0_sv(i[2:0]);
+                if (ui_button_visible_sv(layout, i[2:0])
+                    && x >= scan_btn_x0_img && x < scan_btn_x0_img + UI_STATUS_BTN_W) begin
                     in_img_button = 1'b1;
-                    img_btn_id    = BTN_ZOOM_IN;
-                    img_btn_x0    = 10'd692;
-                end else if (x >= 10'd638 && x < 10'd686) begin
-                    in_img_button = 1'b1;
-                    img_btn_id    = BTN_ZOOM_OUT;
-                    img_btn_x0    = 10'd638;
+                    img_btn_id    = i[2:0];
+                    img_btn_x0    = scan_btn_x0_img;
                 end
             end
         end
@@ -397,7 +437,7 @@ module pixel_shader (
     logic [9:0] btn_local_x;
     logic [9:0] btn_local_y;
     assign btn_local_x = lx_st - any_btn_x0;
-    assign btn_local_y = ly_st - 10'd8;
+    assign btn_local_y = ly_st - UI_STATUS_BTN_TOP;
 
     logic signed [15:0] btn_local_x_s;
     logic signed [15:0] btn_local_y_s;
@@ -499,16 +539,66 @@ module pixel_shader (
     assign glyph_bit = text_in_bounds
                        && font16_data[15 - text_gx_sel] == 1'b1;
 
-    // Sprite read for sprite buttons. spx = local_x * 32 / 48,
-    // spy = local_y * 32 / 48 (reciprocal mul 43691; verified bit-equiv).
-    logic [31:0] spx_mul;
-    logic [31:0] spy_mul;
+    // Sprite read for sprite buttons. spx/spy = floor(local * 32 / 48).
+    function automatic logic [4:0] scale_48_to_32(input logic [9:0] v);
+        begin
+            unique case (v)
+                10'd0:  scale_48_to_32 = 5'd0;
+                10'd1:  scale_48_to_32 = 5'd0;
+                10'd2:  scale_48_to_32 = 5'd1;
+                10'd3:  scale_48_to_32 = 5'd2;
+                10'd4:  scale_48_to_32 = 5'd2;
+                10'd5:  scale_48_to_32 = 5'd3;
+                10'd6:  scale_48_to_32 = 5'd4;
+                10'd7:  scale_48_to_32 = 5'd4;
+                10'd8:  scale_48_to_32 = 5'd5;
+                10'd9:  scale_48_to_32 = 5'd6;
+                10'd10: scale_48_to_32 = 5'd6;
+                10'd11: scale_48_to_32 = 5'd7;
+                10'd12: scale_48_to_32 = 5'd8;
+                10'd13: scale_48_to_32 = 5'd8;
+                10'd14: scale_48_to_32 = 5'd9;
+                10'd15: scale_48_to_32 = 5'd10;
+                10'd16: scale_48_to_32 = 5'd10;
+                10'd17: scale_48_to_32 = 5'd11;
+                10'd18: scale_48_to_32 = 5'd12;
+                10'd19: scale_48_to_32 = 5'd12;
+                10'd20: scale_48_to_32 = 5'd13;
+                10'd21: scale_48_to_32 = 5'd14;
+                10'd22: scale_48_to_32 = 5'd14;
+                10'd23: scale_48_to_32 = 5'd15;
+                10'd24: scale_48_to_32 = 5'd16;
+                10'd25: scale_48_to_32 = 5'd16;
+                10'd26: scale_48_to_32 = 5'd17;
+                10'd27: scale_48_to_32 = 5'd18;
+                10'd28: scale_48_to_32 = 5'd18;
+                10'd29: scale_48_to_32 = 5'd19;
+                10'd30: scale_48_to_32 = 5'd20;
+                10'd31: scale_48_to_32 = 5'd20;
+                10'd32: scale_48_to_32 = 5'd21;
+                10'd33: scale_48_to_32 = 5'd22;
+                10'd34: scale_48_to_32 = 5'd22;
+                10'd35: scale_48_to_32 = 5'd23;
+                10'd36: scale_48_to_32 = 5'd24;
+                10'd37: scale_48_to_32 = 5'd24;
+                10'd38: scale_48_to_32 = 5'd25;
+                10'd39: scale_48_to_32 = 5'd26;
+                10'd40: scale_48_to_32 = 5'd26;
+                10'd41: scale_48_to_32 = 5'd27;
+                10'd42: scale_48_to_32 = 5'd28;
+                10'd43: scale_48_to_32 = 5'd28;
+                10'd44: scale_48_to_32 = 5'd29;
+                10'd45: scale_48_to_32 = 5'd30;
+                10'd46: scale_48_to_32 = 5'd30;
+                default: scale_48_to_32 = 5'd31;
+            endcase
+        end
+    endfunction
+
     logic [4:0]  spx;
     logic [4:0]  spy;
-    assign spx_mul = {22'b0, btn_local_x} * 32'd43691;
-    assign spy_mul = {22'b0, btn_local_y} * 32'd43691;
-    assign spx     = spx_mul[20:16];
-    assign spy     = spy_mul[20:16];
+    assign spx = scale_48_to_32(btn_local_x);
+    assign spy = scale_48_to_32(btn_local_y);
 
     // Sprite ID select. status_btn_sprite() from C: FREQ/VOL fixed, MUTE
     // takes mute_sprite_id, others use SPR_ICON_BLANK (unreachable for the
@@ -558,10 +648,12 @@ module pixel_shader (
     always_comb begin
         // text-button base (edge / inner / fill / ink)
         if (btn_local_x == 10'd0 || btn_local_y == 10'd0
-            || btn_local_x == 10'd47 || btn_local_y == 10'd47) begin
+            || btn_local_x == UI_STATUS_BTN_W - 10'd1
+            || btn_local_y == UI_STATUS_BTN_W - 10'd1) begin
             btn_text_base = TB_EDGE;
         end else if (btn_local_x < 10'd3 || btn_local_y < 10'd3
-                     || btn_local_x >= 10'd45 || btn_local_y >= 10'd45) begin
+                     || btn_local_x >= UI_STATUS_BTN_W - 10'd3
+                     || btn_local_y >= UI_STATUS_BTN_W - 10'd3) begin
             btn_text_base = TB_INNER;
         end else begin
             btn_text_base = TB_FILL;

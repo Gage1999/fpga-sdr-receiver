@@ -51,6 +51,30 @@
 #define GOODIX_INVERT_Y 0
 #endif
 
+#ifndef GOODIX_RAW_X_MIN
+#define GOODIX_RAW_X_MIN 0u
+#endif
+
+#ifndef GOODIX_RAW_X_MAX
+#define GOODIX_RAW_X_MAX ((uint16_t)SCREEN_W - 1u)
+#endif
+
+#ifndef GOODIX_RAW_Y_MIN
+#define GOODIX_RAW_Y_MIN 0u
+#endif
+
+#ifndef GOODIX_RAW_Y_MAX
+#define GOODIX_RAW_Y_MAX ((uint16_t)SCREEN_H - 1u)
+#endif
+
+#ifndef GOODIX_X_OFFSET
+#define GOODIX_X_OFFSET 0
+#endif
+
+#ifndef GOODIX_Y_OFFSET
+#define GOODIX_Y_OFFSET 0
+#endif
+
 typedef struct {
     uint8_t id;
     uint16_t x;
@@ -106,6 +130,24 @@ static uint16_t clamp_axis(uint16_t v, uint16_t dim) {
     return (uint16_t)(dim - 1u);
 }
 
+static uint16_t scale_axis(uint16_t raw, uint16_t raw_min,
+                           uint16_t raw_max, uint16_t dim) {
+    if (raw_max <= raw_min) return clamp_axis(raw, dim);
+    if (raw <= raw_min) return 0u;
+    if (raw >= raw_max) return (uint16_t)(dim - 1u);
+
+    uint32_t num = (uint32_t)(raw - raw_min) * (uint32_t)(dim - 1u);
+    uint32_t den = (uint32_t)(raw_max - raw_min);
+    return (uint16_t)((num + den / 2u) / den);
+}
+
+static uint16_t apply_axis_offset(uint16_t v, int16_t offset, uint16_t dim) {
+    int32_t shifted = (int32_t)v + (int32_t)offset;
+    if (shifted < 0) return 0u;
+    if (shifted >= (int32_t)dim) return (uint16_t)(dim - 1u);
+    return (uint16_t)shifted;
+}
+
 static void map_point(uint16_t raw_x, uint16_t raw_y, uint16_t *x, uint16_t *y) {
     uint16_t mx = raw_x;
     uint16_t my = raw_y;
@@ -116,8 +158,13 @@ static void map_point(uint16_t raw_x, uint16_t raw_y, uint16_t *x, uint16_t *y) 
     my = tmp;
 #endif
 
-    mx = clamp_axis(mx, (uint16_t)SCREEN_W);
-    my = clamp_axis(my, (uint16_t)SCREEN_H);
+    mx = scale_axis(mx, (uint16_t)GOODIX_RAW_X_MIN, (uint16_t)GOODIX_RAW_X_MAX,
+                    (uint16_t)SCREEN_W);
+    my = scale_axis(my, (uint16_t)GOODIX_RAW_Y_MIN, (uint16_t)GOODIX_RAW_Y_MAX,
+                    (uint16_t)SCREEN_H);
+
+    mx = apply_axis_offset(mx, (int16_t)GOODIX_X_OFFSET, (uint16_t)SCREEN_W);
+    my = apply_axis_offset(my, (int16_t)GOODIX_Y_OFFSET, (uint16_t)SCREEN_H);
 
 #if GOODIX_INVERT_X
     mx = (uint16_t)(((uint16_t)SCREEN_W - 1u) - mx);

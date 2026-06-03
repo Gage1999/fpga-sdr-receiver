@@ -10,6 +10,7 @@ module compositor #(
     parameter int PAGE_WORDS = 512,
     parameter int NLINES     = 480,
     parameter int FB_BASE_W  = 0,
+    parameter int VISIBLE_Y0  = 192,   // first visible waterfall scanline; rows above are shader overlays
     parameter int MAX_BURST  = 512,   // cap burst length; <512 avoids the marginal full-page access
     parameter bit HALF_PAGE  = 0,     // 1 = store 256 words per SDRAM row (cols 0..255 only) so no
                                       //     access touches the marginal page boundary. MUST match scan_out.
@@ -41,9 +42,17 @@ module compositor #(
     output logic        busy          // high while filling/writing a row
 );
 
-    // 8-bit magnitude -> RGB565 (placeholder palette; swap for color_lut at integration)
+    // 8-bit magnitude -> RGB565 waterfall heatmap.
+    // Very cheap direct mapping so routing stays close to the grayscale build:
+    // low = blue, mid = green/cyan, high = yellow/red/white.
     function automatic logic [15:0] palette(input logic [7:0] m);
-        palette = {m[7:3], m[7:2], m[7:3]};
+        begin
+            palette = {
+                m[7] ? 5'd31 : {m[6:3], 1'b0},
+                m[6] ? 6'd63 : {m[5:0]},
+                m[7] ? {m[4:0]} : (m[6] ? ~m[4:0] : {m[4:0]})
+            };
+        end
     endfunction
 
     logic [15:0] linebuf [0:ROW_WORDS-1];
@@ -63,6 +72,10 @@ module compositor #(
     logic [9:0]  rd_ptr;       // read index into linebuf
     logic [9:0]  beats;        // wr beats accepted this segment
     logic [8:0]  wf_write_row; // line currently being written
+    logic [8:0]  wf_next_write_row;
+    assign wf_next_write_row = (wf_write_row == VISIBLE_Y0[8:0])
+                             ? NLINES[8:0] - 9'd1
+                             : wf_write_row - 9'd1;
 
     // Registered line-buffer read (1-cycle latency; S_FETCH compensates). See note above.
     always_ff @(posedge clk) linebuf_q <= linebuf[rd_ptr];
@@ -95,7 +108,7 @@ module compositor #(
             words_left   <= 11'd0;
             rd_ptr       <= 10'd0;
             beats        <= 10'd0;
-            wf_write_row <= 9'd0;
+            wf_write_row <= VISIBLE_Y0[8:0];
             wf_base_row  <= 9'd0;
             req_valid    <= 1'b0;
             wr_valid     <= 1'b0;
@@ -167,9 +180,11 @@ module compositor #(
                 S_WAIT: begin
                     if (done) begin
                         if (words_left == 11'd0) begin
-                            // whole row written; advance the scroll pointer
-                            wf_write_row <= (wf_write_row == NLINES[8:0]-9'd1) ? 9'd0 : wf_write_row + 9'd1;
-                            wf_base_row  <= (wf_write_row == NLINES[8:0]-9'd1) ? 9'd0 : wf_write_row + 9'd1;
+                            // Whole row written. Rows are written backward inside
+                            // the visible waterfall band so display lines below
+                            // VISIBLE_Y0 show progressively older rows.
+                            wf_base_row  <= wf_write_row - VISIBLE_Y0[8:0];
+                            wf_write_row <= wf_next_write_row;
                             st           <= S_FILL;
                         end else begin
                             st <= S_REQ;

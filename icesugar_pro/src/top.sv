@@ -228,6 +228,10 @@ spi_backchannel u_spi_backchannel (
     .cmd_valid (cmd_valid),
     .cmd (cmd),
     .arg (cmd_arg),
+    .mode (mode),
+    .volume (volume),
+    .mute (mute),
+    .freq_hz (freq_hz),
     .spi_clk (spi_clk),
     .spi_rst (spi_rst),
     .spi_cs_n (cs),
@@ -483,6 +487,25 @@ logic [31:0] rx_sps_bcd_next;
 logic [RX_SPS_CLK_W-1:0] rx_sps_clk_count;
 
 localparam [4:0] WF_FRAME_DECIM = 5'd31;
+localparam int FFT_DC_SHIFT = 11;
+
+logic signed [23:0] fft_dc_i;
+logic signed [23:0] fft_dc_q;
+logic signed [16:0] fft_i_hp_wide;
+logic signed [16:0] fft_q_hp_wide;
+logic signed [15:0] fft_i_in;
+logic signed [15:0] fft_q_in;
+
+function automatic logic signed [15:0] sat17_to_16(input logic signed [16:0] x);
+    begin
+        if (x > 17'sd32767)
+            sat17_to_16 = 16'sd32767;
+        else if (x < -17'sd32768)
+            sat17_to_16 = -16'sd32768;
+        else
+            sat17_to_16 = x[15:0];
+    end
+endfunction
 
 spectrum_zoom_decimator u_spectrum_zoom_decimator (
     .clk(CLK),
@@ -497,11 +520,28 @@ spectrum_zoom_decimator u_spectrum_zoom_decimator (
     .decim_log2(spectrum_decim_log2)
 );
 
+always_ff @(posedge CLK or posedge sys_rst) begin
+    if (sys_rst) begin
+        fft_dc_i <= '0;
+        fft_dc_q <= '0;
+    end else if (fft_valid) begin
+        fft_dc_i <= fft_dc_i + (({{8{fft_i[15]}}, fft_i} - fft_dc_i) >>> FFT_DC_SHIFT);
+        fft_dc_q <= fft_dc_q + (({{8{fft_q[15]}}, fft_q} - fft_dc_q) >>> FFT_DC_SHIFT);
+    end
+end
+
+always_comb begin
+    fft_i_hp_wide = $signed({fft_i[15], fft_i}) - $signed(fft_dc_i[16:0]);
+    fft_q_hp_wide = $signed({fft_q[15], fft_q}) - $signed(fft_dc_q[16:0]);
+    fft_i_in = sat17_to_16(fft_i_hp_wide);
+    fft_q_in = sat17_to_16(fft_q_hp_wide);
+end
+
 fft256 u_fft (
     .clk (CLK),
     .rst (sys_rst),
-    .i_in (fft_i),
-    .q_in (fft_q),
+    .i_in (fft_i_in),
+    .q_in (fft_q_in),
     .in_valid (fft_valid),
     .bin_magnitude (bin_magnitude),
     .bin_index (bin_index),
@@ -590,10 +630,12 @@ always_ff @(posedge CLK or posedge sys_rst) begin
 end
 
 always_comb begin
-    if (bin_magnitude[7:4] != 4'b0000)
-        wf_wr_magnitude = 8'hff;
-    else
-        wf_wr_magnitude = {bin_magnitude[3:0], 4'b0000};
+    unique case (bin_index)
+        8'd0:    wf_wr_magnitude = {1'b0, bin_magnitude[7:1]};
+        8'd1,
+        8'd255:  wf_wr_magnitude = {1'b0, bin_magnitude[7:1]};
+        default: wf_wr_magnitude = bin_magnitude;
+    endcase
 end
 
 assign wf_frame_active = (bin_index == 8'd0) ? (wf_frame_skip == 5'd0) : wf_frame_write;
@@ -629,7 +671,7 @@ logic clr_done;
 logic [7:0] wf_bins [0:255];
 logic [9:0] wf_exp_col;
 logic       wf_exp_active;
-logic [31:0] wf_exp_mul;
+logic [23:0] wf_exp_phase;
 logic [15:0] wf_exp_mul_const;
 logic [7:0] wf_exp_display_bin;
 logic [7:0] wf_exp_bin_off;
@@ -660,8 +702,7 @@ always_comb begin
     endcase
 end
 
-assign wf_exp_mul = {22'd0, wf_exp_col} * {16'd0, wf_exp_mul_const};
-assign wf_exp_bin_off = wf_exp_mul[23:16];
+assign wf_exp_bin_off = wf_exp_phase[23:16];
 assign wf_exp_bin_sum = {1'b0, wf_exp_start_bin} + {1'b0, wf_exp_bin_off};
 assign wf_exp_display_bin = wf_exp_bin_sum[8] ? 8'hff : wf_exp_bin_sum[7:0];
 assign wf_exp_idx   = wf_exp_display_bin + 8'd128;
@@ -673,6 +714,7 @@ assign wf_synth_wpush = (WF_SYNTH_TEST != 0) && wf_synth_tick && !wf_mag_wfull;
 always_ff @(posedge CLK or posedge sys_rst) begin
     if (sys_rst) begin
         wf_exp_col <= 10'd0;
+        wf_exp_phase <= 24'd0;
         wf_exp_active <= 1'b0;
         wf_exp_start_bin <= 8'd64;
         wf_exp_visible_bins <= 9'd128;
@@ -693,14 +735,17 @@ always_ff @(posedge CLK or posedge sys_rst) begin
         if (!wf_exp_active && wf_wr_valid && bin_index == 8'd255) begin
             wf_exp_active <= 1'b1;
             wf_exp_col <= 10'd0;
+            wf_exp_phase <= 24'd0;
             wf_exp_start_bin <= shader_spectrum_start_bin;
             wf_exp_visible_bins <= shader_spectrum_visible_bins;
         end else if (wf_exp_wpush) begin
             if (wf_exp_col == WF_LINE_WORDS[9:0] - 10'd1) begin
                 wf_exp_active <= 1'b0;
                 wf_exp_col <= 10'd0;
+                wf_exp_phase <= 24'd0;
             end else begin
                 wf_exp_col <= wf_exp_col + 10'd1;
+                wf_exp_phase <= wf_exp_phase + {8'd0, wf_exp_mul_const};
             end
         end
     end
@@ -1259,7 +1304,7 @@ logic [9:0]  lc_w_col;
 logic [15:0] lc_w_data;
 logic        lc_w_en;
 
-scan_out #(.LINE_WORDS(WF_LINE_WORDS), .NLINES(LCD_V_ACTIVE), .MAX_BURST(256), .HALF_PAGE(1)) u_scan_out (
+scan_out #(.LINE_WORDS(WF_LINE_WORDS), .NLINES(LCD_V_ACTIVE), .VISIBLE_Y0(192), .MAX_BURST(256), .HALF_PAGE(1)) u_scan_out (
     .clk(clk_sdram), .rst(sdram_rst | ~clr_done),
     .px_line(scan_y[8:0]),
     .px_hblank((scan_x >= LCD_H_ACTIVE[10:0]) && (scan_y < LCD_V_ACTIVE[9:0])),
@@ -1281,7 +1326,7 @@ logic [24:0] comp_req_addr;
 logic [9:0]  comp_req_len;
 logic [15:0] comp_wr_data;
 
-compositor #(.ROW_WORDS(WF_LINE_WORDS), .NLINES(LCD_V_ACTIVE), .MAX_BURST(256), .HALF_PAGE(1), .TEST_PATTERN(0)) u_compositor (
+compositor #(.ROW_WORDS(WF_LINE_WORDS), .NLINES(LCD_V_ACTIVE), .VISIBLE_Y0(192), .MAX_BURST(256), .HALF_PAGE(1), .TEST_PATTERN(0)) u_compositor (
     .clk(clk_sdram), .rst(sdram_rst | ~clr_done),
     .mag_in(comp_mag_in), .mag_valid(comp_mag_valid), .wf_base_row(wf_base_row),
     .req_valid(comp_req_valid), .req_wr(comp_req_wr), .req_addr(comp_req_addr), .req_len(comp_req_len),

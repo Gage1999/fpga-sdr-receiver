@@ -255,6 +255,15 @@ static uint16_t      bc_len     = 0;
 static uint16_t      bc_filled  = 0;
 static uint8_t       bc_payload[BCHAN_MAX_PAYLOAD];
 static uint8_t       bc_crc_lo  = 0;
+static unsigned      bc_rx_bytes = 0;
+static unsigned      bc_nonzero_bytes = 0;
+static unsigned      bc_magic_bytes = 0;
+static unsigned      bc_frames_ok = 0;
+static unsigned      bc_frames_crc_bad = 0;
+static unsigned      bc_frames_len_bad = 0;
+static unsigned      bc_last_report_tx = 0;
+static uint8_t       bc_last_cmd = 0;
+static uint32_t      bc_last_arg = 0;
 
 static uint16_t bchan_crc16(const uint8_t *data, uint16_t len)
 {
@@ -279,15 +288,16 @@ static void bchan_dispatch(void)
                  | ((uint32_t)bc_payload[2] << 8)
                  | ((uint32_t)bc_payload[3] << 16)
                  | ((uint32_t)bc_payload[4] << 24);
-    static int      have_last = 0;
-    static uint8_t  last_cmd  = 0;
-    static uint32_t last_arg  = 0;
+    static uint8_t  have_cmd[256] = {0};
+    static uint32_t last_arg_by_cmd[256] = {0};
 
-    if (have_last && cmd == last_cmd && arg == last_arg)
+    bc_last_cmd = cmd;
+    bc_last_arg = arg;
+
+    if (have_cmd[cmd] && arg == last_arg_by_cmd[cmd])
         return;
-    have_last = 1;
-    last_cmd  = cmd;
-    last_arg  = arg;
+    have_cmd[cmd] = 1;
+    last_arg_by_cmd[cmd] = arg;
 
     switch (cmd) {
     case CMD_SET_MODE:
@@ -341,6 +351,12 @@ static void bchan_dispatch(void)
 
 static void bchan_push_byte(uint8_t b)
 {
+    bc_rx_bytes++;
+    if (b != 0)
+        bc_nonzero_bytes++;
+    if (b == WIRE_MAGIC)
+        bc_magic_bytes++;
+
     switch (bc_state) {
     case BS_MAGIC:
         if (b == WIRE_MAGIC)
@@ -362,10 +378,12 @@ static void bchan_push_byte(uint8_t b)
         bc_filled = 0;
         if (bc_len == 0)
             bc_state = BS_CRC_LO;
-        else if (bc_len > BCHAN_MAX_PAYLOAD)
+        else if (bc_len > BCHAN_MAX_PAYLOAD) {
+            bc_frames_len_bad++;
             bc_state = BS_MAGIC;  /* oversized frame, re-sync */
-        else
+        } else {
             bc_state = BS_PAYLOAD;
+        }
         break;
 
     case BS_PAYLOAD:
@@ -387,12 +405,28 @@ static void bchan_push_byte(uint8_t b)
         crc_in[2] = (uint8_t)((bc_len >> 8) & 0xffu);
         memcpy(&crc_in[3], bc_payload, bc_filled);
         uint16_t calc_crc = bchan_crc16(crc_in, (uint16_t)(3u + bc_filled));
-        if (rx_crc == calc_crc)
+        if (rx_crc == calc_crc) {
+            bc_frames_ok++;
             bchan_dispatch();
+        } else {
+            bc_frames_crc_bad++;
+        }
         bc_state = BS_MAGIC;
         break;
     }
     }
+}
+
+static void backchannel_report_if_due(void)
+{
+    if (g_spi_tx_count - bc_last_report_tx < 250000u)
+        return;
+    bc_last_report_tx = g_spi_tx_count;
+    fprintf(stderr,
+            "[bchan] stats bytes=%u nonzero=%u magic=%u ok=%u crc_bad=%u len_bad=%u last_cmd=0x%02x last_arg=%u\n",
+            bc_rx_bytes, bc_nonzero_bytes, bc_magic_bytes,
+            bc_frames_ok, bc_frames_crc_bad, bc_frames_len_bad,
+            bc_last_cmd, bc_last_arg);
 }
 
 /* Drain the RX FIFO into the backchannel parser. Called after each SPI transaction. */
@@ -419,6 +453,7 @@ static void backchannel_poll(void)
         spi_send_byte(0);
     spi_deselect();
     backchannel_drain();
+    backchannel_report_if_due();
 }
 
 static void pace_samples(unsigned long long total, unsigned rate, const struct timeval *t0)
