@@ -14,6 +14,7 @@ module top #(
     parameter WF_ROWS = 240,
     parameter WF_SYNTH_TEST = 0,      // 1 = feed SDRAM waterfall from a local test ramp
     parameter WF_SYNTH_DIV = 256,
+    parameter RDS_ENABLE = 1,         // 1 = decode RDS from the FM MPX and show PS name
     parameter CLK_HZ = 25_000_000
 )(
     input logic CLK,
@@ -244,7 +245,8 @@ logic [7:0] ui_flags;
 logic [9:0] touch_x;
 logic [9:0] touch_y;
 logic [7:0] active_button;
-logic [191:0] rds_line;
+logic [191:0] rds_line;        // line shown by the shader (FPGA-decoded PS or Pico text)
+logic [191:0] rds_line_pico;   // RDS/RadioText text supplied over the Pico link
 logic ui_frame_valid;
 
 ui_wire_rx u_ui_wire_rx (
@@ -262,7 +264,7 @@ ui_wire_rx u_ui_wire_rx (
     .touch_x(touch_x),
     .touch_y(touch_y),
     .active_button(active_button),
-    .rds_line(rds_line),
+    .rds_line(rds_line_pico),
     .frame_valid(ui_frame_valid)
 );
 
@@ -910,6 +912,8 @@ assign fm_q_scaled = cic_in_q >>> FM_IQ_RSHIFT;
 
 logic signed [15:0] audio_raw;
 logic audio_raw_valid;
+logic signed [15:0] rds_mpx;
+logic rds_mpx_valid;
 
 fm_demod u_fm (
     .clk (CLK),
@@ -918,8 +922,61 @@ fm_demod u_fm (
     .q_in (fm_q_scaled),
     .in_valid (cic_in_valid),
     .audio_out (audio_raw),
-    .audio_valid (audio_raw_valid)
+    .audio_valid (audio_raw_valid),
+    .mpx_out (rds_mpx),
+    .mpx_valid (rds_mpx_valid)
 );
+
+// ---------------------------------------------------------------------------
+// RDS receiver: recover the 57 kHz RDS subcarrier from the FM composite (MPX)
+// and decode the Program Service (PS) name. The decoded 24-char line replaces
+// the Pico-supplied RDS text on screen once a full PS name is available; until
+// then the Pico text shows through. Gated by RDS_ENABLE.
+//   IQ rate 260.417 kHz -> rds_demod default PILOT_FW assumes that sample rate.
+// ---------------------------------------------------------------------------
+logic [191:0] rds_line_fpga;
+logic         rds_synced, rds_ps_valid;
+
+generate
+if (RDS_ENABLE) begin : g_rds
+    logic        rds_bit, rds_bit_valid, rds_pll_locked;
+    logic        rds_group_valid, rds_c_cprime;
+    logic [15:0] rds_pi, rds_b, rds_c, rds_d;
+    logic [3:0]  rds_block_ok;
+    logic [4:0]  rds_pty;
+    logic        rds_tp;
+    logic [7:0]  rds_ps_mask;
+    logic [63:0] rds_ps_name;
+
+    rds_demod u_rds_demod (
+        .clk(CLK), .rst(sys_rst),
+        .mpx_in(rds_mpx), .mpx_valid(rds_mpx_valid),
+        .bit_out(rds_bit), .bit_valid(rds_bit_valid), .pll_locked(rds_pll_locked)
+    );
+    rds_sync u_rds_sync (
+        .clk(CLK), .rst(sys_rst),
+        .bit_in(rds_bit), .bit_valid(rds_bit_valid),
+        .group_valid(rds_group_valid), .pi_word(rds_pi),
+        .blk_b(rds_b), .blk_c(rds_c), .blk_d(rds_d),
+        .c_is_cprime(rds_c_cprime), .block_ok(rds_block_ok), .synced(rds_synced)
+    );
+    rds_group u_rds_group (
+        .clk(CLK), .rst(sys_rst), .group_valid(rds_group_valid),
+        .pi_word(rds_pi), .blk_b(rds_b), .blk_c(rds_c), .blk_d(rds_d),
+        .c_is_cprime(rds_c_cprime), .block_ok(rds_block_ok),
+        .pi(), .pty(rds_pty), .tp(rds_tp), .ps_mask(rds_ps_mask),
+        .ps_valid(rds_ps_valid), .ps_name(rds_ps_name), .rds_line(rds_line_fpga)
+    );
+end else begin : g_rds
+    assign rds_line_fpga = {24{8'h20}};
+    assign rds_synced    = 1'b0;
+    assign rds_ps_valid  = 1'b0;
+end
+endgenerate
+
+// Prefer the FPGA-decoded PS name once it is complete; otherwise fall back to the
+// RDS text delivered over the Pico link.
+assign rds_line = rds_ps_valid ? rds_line_fpga : rds_line_pico;
 
 // FM_CIC_R:1 audio decimator. The 3-stage CIC gives the discriminator output
 // enough stop-band rejection before it is reduced to the I2S playback rate.

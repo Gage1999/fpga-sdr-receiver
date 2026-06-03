@@ -243,7 +243,10 @@ JP5 SPI -> spi_frame_rx -> byte FIFO -> tlv_demux -> tlv_iq_sink
                                                         |                             +-> spectrum_bin_ram
                                                         |                             +-> waterfall row expand -> SDRAM compositor
                                                         |
-                                                        +-> FM demod -> I2S -> PCM5102
+                                                        +-> FM demod -+-> I2S -> PCM5102
+                                                                       |
+                                                                       +-> MPX -> rds_demod -> rds_sync
+                                                                                  -> rds_group -> PS name -> rds_line
 
 Pico SPI -> spi_ui_cmd_rx -> control_regs -> local audio state
                                       |
@@ -275,7 +278,7 @@ center-frequency shifts rely on the Pico command relay retuning the Pluto LO.
 |---|---|---|---|
 | FM | ECP5 | `TLV_IQ` raw IQ | built/proven; FFT zoom uses the ECP5 decimator |
 | AM | not wired | `TLV_IQ` raw IQ | spectrum/zoom display path exists; AM audio demod is not implemented |
-| FM RDS metadata | Pluto | compact UI/text metadata | display slot modeled; status row renders left-aligned text with no static prefix |
+| FM RDS | ECP5 | (none — decoded from the FM MPX in fabric) | built/sim-proven; `rds_demod`->`rds_sync`->`rds_group` recover the PS name and mux it onto `rds_line` (falls back to Pico text). Gated by `top` parameter `RDS_ENABLE`. |
 | GOES HRIT | Pluto | `TLV_IMAGE_ROW` decoded rows | Pluto decoder/transport started; ECP5 render path not wired |
 | ADS-B | Pluto | `TLV_OBJECT_LIST` aircraft list | Pluto decoder/transport started; ECP5 render path not wired |
 

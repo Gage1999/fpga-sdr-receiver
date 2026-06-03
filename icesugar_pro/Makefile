@@ -4,6 +4,7 @@
         prog_fm_audio_test prog_fm_audio_tone_test prog_fm_audio_iq_test \
         prog_sdram_test \
         sim sim_fm sim_lcd sim_fft sim_sdram sim_sdram_bl sim_sdram_wf \
+        sim_rds sim_rds_sync sim_rds_group sim_rds_demod sim_rds_chain \
         sim_spectrum_zoom_decimator \
         sim_line_cache sim_scan_out sim_arb sim_compositor sim_sdram_test \
         sim_integration sim_spi_frame_rx sim_ui_wire_rx sim_tlv_demux sim_tlv sim_tlv_all
@@ -33,6 +34,9 @@ SV_SRCS = src/top.sv \
           src/waterfall_buf.sv \
           src/cic_decimate.sv \
           src/fm_demod.sv \
+          src/rds_demod.sv \
+          src/rds_sync.sv \
+          src/rds_group.sv \
           src/audio_fifo.sv \
           src/i2s_tx.sv \
           src/color_lut.sv \
@@ -158,6 +162,26 @@ sim: tb/top_tb.sv $(SV_SRCS) build/font_8x16.mem | build
 sim_fm: tb/tb_fm_demod.sv src/fm_demod.sv | build
 	iverilog -g2012 -o build/fm_demod.sim $^
 	vvp build/fm_demod.sim
+
+# RDS receiver block tests.
+sim_rds_sync: tb/tb_rds_sync.sv src/rds_sync.sv | build
+	iverilog -g2012 -o build/rds_sync.sim $^
+	vvp build/rds_sync.sim
+
+sim_rds_group: tb/tb_rds_group.sv src/rds_group.sv | build
+	iverilog -g2012 -o build/rds_group.sim $^
+	vvp build/rds_group.sim
+
+sim_rds_demod: tb/tb_rds_demod.sv src/rds_demod.sv | build
+	iverilog -g2012 -o build/rds_demod.sim $^
+	vvp build/rds_demod.sim
+
+# Full RDS receive chain: synthesized MPX -> demod -> sync -> group -> PS name.
+sim_rds_chain: tb/tb_rds_chain.sv src/rds_demod.sv src/rds_sync.sv src/rds_group.sv | build
+	iverilog -g2012 -o build/rds_chain.sim $^
+	vvp build/rds_chain.sim
+
+sim_rds: sim_rds_sync sim_rds_group sim_rds_demod sim_rds_chain
 
 sim_lcd: tb/tb_lcd.sv src/lcd.sv src/color_lut.sv src/font8x16_rom.sv src/scan_timing.sv build/font_8x16.mem | build
 	iverilog -g2012 -o build/lcd.sim tb/tb_lcd.sv src/lcd.sv src/color_lut.sv src/font8x16_rom.sv src/scan_timing.sv

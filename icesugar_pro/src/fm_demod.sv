@@ -6,7 +6,13 @@ module fm_demod (
     input logic in_valid,
 
     output logic signed [15:0] audio_out,
-    output logic audio_valid
+    output logic audio_valid,
+
+    // Composite/MPX tap: the wideband discriminator output BEFORE de-emphasis and
+    // audio decimation. RDS rides on the 57 kHz subcarrier in this signal, so the
+    // RDS receiver taps here rather than the de-emphasized audio path.
+    output logic signed [15:0] mpx_out,
+    output logic mpx_valid
 );
 
 logic signed [15:0] i_prev, q_prev;
@@ -39,8 +45,11 @@ always_ff @(posedge clk or posedge rst) begin
         de_state <= '0;
         audio_out <= '0;
         audio_valid <= 1'b0;
+        mpx_out <= '0;
+        mpx_valid <= 1'b0;
     end else begin
         audio_valid <= 1'b0;
+        mpx_valid <= 1'b0;
         if (in_valid) begin
             cross1 <= i_prev * q_in;
             cross2 <= i_in * q_prev;
@@ -54,6 +63,10 @@ always_ff @(posedge clk or posedge rst) begin
 
             audio_out <= de_state;
             audio_valid <= 1'b1;
+
+            // MPX tap: the discriminator output before de-emphasis.
+            mpx_out <= demod_scaled;
+            mpx_valid <= 1'b1;
 
             i_prev <= i_in;
             q_prev <= q_in;
