@@ -65,16 +65,19 @@ function [7:0] bitrev8(input [7:0] x);
     end
 endfunction
 
-function [7:0] abs16_hi(input logic signed [15:0] x);
+function [7:0] abs16_scaled(input logic signed [15:0] x);
     logic signed [15:0] neg_x;
+    logic [15:0] abs_x;
     begin
         neg_x = -x;
         if (x == -16'sd32768)
-            abs16_hi = 8'hff;
+            abs_x = 16'h8000;
         else if (x[15])
-            abs16_hi = neg_x[15:8];
+            abs_x = neg_x;
         else
-            abs16_hi = x[15:8];
+            abs_x = x;
+
+        abs16_scaled = abs_x[15:14] ? 8'hff : abs_x[13:6];
     end
 endfunction
 
@@ -82,7 +85,7 @@ function [7:0] mag_sum(input logic signed [15:0] r,
                        input logic signed [15:0] i);
     logic [8:0] sum;
     begin
-        sum = 9'(abs16_hi(r)) + 9'(abs16_hi(i));
+        sum = 9'(abs16_scaled(r)) + 9'(abs16_scaled(i));
         mag_sum = sum[8] ? 8'hff : sum[7:0];
     end
 endfunction
@@ -411,4 +414,3 @@ always_ff @(posedge clk) begin
 end
 
 endmodule
-

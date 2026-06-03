@@ -180,6 +180,12 @@ initial begin
     collect_frame();
     check_tone(32);
 
+    clear_mags();
+    reset_dut();
+    send_tone_frame(-32);
+    collect_frame();
+    check_tone(224);
+
     if (errors == 0)
         $display("ALL TESTS PASSED");
     else
