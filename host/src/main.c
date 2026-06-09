@@ -1,4 +1,4 @@
-// Host harness — SDL window driving the in-process Pico+FPGA simulators.
+// Host harness - SDL window driving the in-process Pico+FPGA simulators.
 //
 // One window, 800x480 (or scaled), refreshed at ~60 Hz from the FPGA
 // simulator's scan-out path. Mouse becomes touch. Keyboard shortcuts
@@ -31,7 +31,7 @@ static int sdl_init_window(int initial_scale) {
     }
     int w = SCREEN_W * initial_scale;
     int h = SCREEN_H * initial_scale;
-    g_window = SDL_CreateWindow("fpga-sdr-receiver — host harness",
+    g_window = SDL_CreateWindow("fpga-sdr-receiver - host harness",
                                 SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
                                 w, h, SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_RESIZABLE);
     if (!g_window) { fprintf(stderr, "SDL_CreateWindow: %s\n", SDL_GetError()); return -1; }
@@ -140,7 +140,7 @@ int main(int argc, char **argv) {
             }
         }
 
-        // Pico → FPGA host mock: synthesize the same kind of full-width FFT row
+        // Pico -> FPGA host mock: synthesize the same kind of full-width FFT row
         // the hardware DSP path produces for the selected RF span.
         uint16_t synth_bins[UI_SPECTRUM_BINS];
         synth_spectrum_bins_for_span(pico.L.curr.freq_hz,

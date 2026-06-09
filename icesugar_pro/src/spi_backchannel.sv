@@ -1,41 +1,36 @@
 module spi_backchannel (
-    input  logic        clk,
-    input  logic        rst,
+    input logic clk,
+    input logic rst,
 
-    input  logic        cmd_valid,
-    input  logic [7:0]  cmd,
-    input  logic [31:0] arg,
-    input  logic [2:0]  mode,
-    input  logic [7:0]  volume,
-    input  logic        mute,
-    input  logic [31:0] freq_hz,
+    input logic cmd_valid,
+    input logic [7:0] cmd,
+    input logic [31:0] arg,
+    input logic [2:0] mode,
+    input logic [7:0] volume,
+    input logic mute,
+    input logic [31:0] freq_hz,
 
-    input  logic        spi_clk,
-    input  logic        spi_rst,
-    input  logic        spi_cs_n,
-    output logic        spi_miso,
-
-    output logic        busy,
-    output logic [15:0] dropped_count
+    input logic spi_clk,
+    input logic spi_rst,
+    input logic spi_cs_n,
+    output logic spi_miso
 );
 
 localparam logic [7:0] FRAME_MAGIC = 8'hA5;
 localparam logic [7:0] OP_RADIO_COMMAND = 8'h06;
 localparam logic [15:0] RADIO_COMMAND_LEN = 16'd5;
 
-localparam logic [7:0] CMD_SET_MODE   = 8'h01;
+localparam logic [7:0] CMD_SET_MODE = 8'h01;
 localparam logic [7:0] CMD_SET_VOLUME = 8'h02;
-localparam logic [7:0] CMD_SET_FREQ   = 8'h03;
+localparam logic [7:0] CMD_SET_FREQ = 8'h03;
 
 logic [39:0] frame_payload_spi;
-logic [7:0]  shift_spi;
-logic [2:0]  bit_cnt_spi;
-logic [3:0]  byte_idx_spi;
-logic        frame_active_spi;
-logic        frame_sent_this_cs_spi;
-wire         spi_frame_rst = spi_rst | spi_cs_n;
-
-assign busy = 1'b0;
+logic [7:0] shift_spi;
+logic [2:0] bit_cnt_spi;
+logic [3:0] byte_idx_spi;
+logic frame_active_spi;
+logic frame_sent_this_cs_spi;
+wire spi_frame_rst = spi_rst | spi_cs_n;
 
 function automatic logic [39:0] live_payload;
     begin
@@ -97,13 +92,6 @@ function automatic logic [7:0] frame_byte(
         endcase
     end
 endfunction
-
-always_ff @(posedge clk or posedge rst) begin
-    if (rst)
-        dropped_count <= '0;
-    else
-        dropped_count <= '0;
-end
 
 always_ff @(negedge spi_clk or posedge spi_frame_rst) begin
     if (spi_frame_rst) begin

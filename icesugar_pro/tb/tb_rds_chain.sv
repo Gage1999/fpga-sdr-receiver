@@ -1,11 +1,6 @@
 `timescale 1ns/1ps
 
-// tb_rds_chain — full RDS receive chain end to end.
-//
-// Synthesize an MPX carrying a real RDS bitstream (repeating group-0A frames with
-// valid checkwords, PS name "RADIO 99") plus pilot and multiplex clutter, then
-// run it through rds_demod -> rds_sync -> rds_group and confirm the decoded PS
-// name, PI and lock state come out the far end.
+// tb_rds_chain - full RDS receive chain end to end.
 
 module tb_rds_chain;
 

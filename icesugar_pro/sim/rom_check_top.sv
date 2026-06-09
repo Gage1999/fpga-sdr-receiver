@@ -1,7 +1,3 @@
-// Test-only top: exposes the two flat ROMs so tb_rom_check.cpp can sweep every
-// address and confirm the .mem files (built by tools/rom_to_mem.py) load back
-// bit-for-bit equal to the C source-of-truth arrays. This is the canary for the
-// rom_to_mem -> $readmemh -> ROM-module path.
 module rom_check_top (
     input  logic [11:0] font_addr,
     output logic [15:0] font_data,

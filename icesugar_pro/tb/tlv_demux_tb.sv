@@ -1,9 +1,4 @@
 // Testbench for tlv_demux.sv
-// Drives the byte-stream interface directly (one byte/cycle, as top.sv does)
-// and checks: payload routing + sop/eop framing, per-type packet counts,
-// back-to-back packets, SOF re-sync after a short packet, unknown types, and
-// zero-length packets. Inputs driven non-blocking after the edge so they never
-// race the DUT clock (matches the repo's other TBs).
 
 `timescale 1ns/1ps
 
@@ -34,7 +29,7 @@ module tlv_demux_tb;
 
     int errors = 0;
 
-    // ---- Scoreboard: capture the payload stream between resets ----
+    // Scoreboard: capture the payload stream between resets.
     logic [7:0] rx_byte [0:1023];
     logic [7:0] rx_type [0:1023];
     int  rx_count, sop_count, eop_count;

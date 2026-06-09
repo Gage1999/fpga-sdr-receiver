@@ -8,12 +8,6 @@
 #include "ui_state.h"
 #include "wire_protocol.h"
 
-// ──────────────────────────────────────────────────────────────────────────────
-// Constants that govern UI feel. All chosen to be FPGA-translatable when the
-// Pico is replaced by an FPGA-internal soft state machine someday (it won't
-// be, but the discipline is cheap).
-// ──────────────────────────────────────────────────────────────────────────────
-
 #define FULL_SYNC_EVERY_FRAMES 16u
 #define LONG_PRESS_US 600000ull  // 600 ms
 
@@ -82,11 +76,7 @@ static uint32_t emit_state(ui_logic_t *L) {
     return 0;
 }
 
-// ──────────────────────────────────────────────────────────────────────────────
-// Action handlers. Pure mutation of L->curr. Wire emission deferred to end.
-// ──────────────────────────────────────────────────────────────────────────────
-
-// Switches the active mode and snaps the page to match — they move together
+// Switches the active mode and snaps the page to match - they move together
 // because only one mode can run at a time (single RX LO).
 static void set_demod(ui_logic_t *L, uint8_t demod) {
     L->curr.demod = demod;

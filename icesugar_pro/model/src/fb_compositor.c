@@ -7,7 +7,7 @@
 #include "ui_state.h"
 
 // Host implementation: literal memmove for waterfall scroll. The FPGA uses
-// a base-row pointer modulo the region height (arch doc §7a); visible
+// a base-row pointer modulo the region height (arch doc section 7a); visible
 // behavior is identical, which is what the golden tests verify.
 
 void fb_compose_waterfall_step(fb_t *fb,
@@ -17,7 +17,7 @@ void fb_compose_waterfall_step(fb_t *fb,
     region_t r = region_for_kind(R_WATERFALL, layout);
     if (r.kind != R_WATERFALL || r.h < 2) return;
 
-    // Scroll: row y ← row y-1, top-down, except top row.
+    // Scroll: row y <- row y-1, top-down, except top row.
     for (uint16_t y = (uint16_t)(r.y0 + r.h - 1); y > r.y0; y--) {
         for (uint16_t x = r.x0; x < r.x0 + r.w; x++) {
             fb_write(fb, x, y, fb_read(fb, x, (uint16_t)(y - 1)));
@@ -82,13 +82,9 @@ void fb_compose_clear(fb_t *fb, region_t r, uint16_t color) {
         fb_write_row(fb, r.x0, y, scratch, n);
     }
 }
-
-// ──────────────────────────────────────────────────────────────────────────────
 // ADS-B map. The host model loads the tracked Riverside RGB565 basemap when it
 // is available; if not, it falls back to a stylized UCR/range-ring placeholder.
 // Aircraft and range labels are drawn on top either way.
-// ──────────────────────────────────────────────────────────────────────────────
-
 #define ADSB_BASEMAP_W 800u
 #define ADSB_BASEMAP_H 448u
 #define ADSB_BASEMAP_PATH "icesugar_pro/model/assets/riverside_ucr.bin"

@@ -1,6 +1,6 @@
 `timescale 1ns/1ps
 
-// tb_rds_group — drive four group-0A segments carrying the PS name "RADIO 99"
+// tb_rds_group - drive four group-0A segments carrying the PS name "RADIO 99"
 // and confirm the decoder assembles the name and recovers PI/PTY.
 
 module tb_rds_group;

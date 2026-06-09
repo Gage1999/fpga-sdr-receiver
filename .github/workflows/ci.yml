@@ -47,7 +47,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y cmake ninja-build verilator python3
 
-      - name: configure (host harness off — only need render_model + shared)
+      - name: configure (host harness off - only need render_model + shared)
         run: cmake -S . -B build -G Ninja -DBUILD_HOST_HARNESS=OFF
 
       - name: build C reference archives

@@ -1,5 +1,5 @@
 #!/bin/bash
-# build_libs.sh — package all ADI library IPs needed for fishball7020_rf
+# build_libs.sh - package all ADI library IPs needed for fishball7020_rf
 # Run once before rebuild.tcl if IPs have not been packaged yet.
 # Usage: bash build_libs.sh
 

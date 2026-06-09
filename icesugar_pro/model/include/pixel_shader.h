@@ -9,13 +9,6 @@
 #define SHADER_BAND_TEXT_CHARS 20u
 
 // State the per-pixel shader reads. Populated once per frame by
-// pixel_shader_prepare() from the live ui_state_t + ROMs. Everything here
-// either fits in a register on the FPGA or comes from a BRAM port (the
-// spectrum_bins pointer stands in for one).
-//
-// The split exists so the per-pixel path stays at pixel-clock budget on
-// hardware: format_freq_mhz, label_origin scans, the volume scale multiply,
-// etc. happen once per V-blank instead of 384,000 times per frame.
 typedef struct {
     uint8_t  layout;
     uint8_t  demod;
@@ -59,11 +52,6 @@ void pixel_shader_prepare(const ui_state_t *ui, const aux_roms_t *roms,
                           shader_state_t *out);
 
 // Pure function. Given the prepared shader state, FB pixel under this
-// position, and EBR ROMs, return the final RGB565 for (x, y).
-//
-// On hardware: combinational + ROM lookups on the pixel clock. The C is
-// the executable spec — the SV implementation must produce identical
-// output for identical inputs.
 uint16_t pixel_shader(uint16_t x, uint16_t y,
                       uint16_t fb_under,
                       const shader_state_t *state,

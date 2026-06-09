@@ -1,16 +1,11 @@
 // top_sdram_cal.sv
-// SDRAM read-capture calibration. Writes a known 256-word pattern, then repeatedly
-// reads it back while sampling the DQ bus at four clock phases (0/90/180/270 deg),
-// counting read errors per phase. The LCD shows four vertical bands, one per phase,
-// with a red bar from the top whose height is proportional to the error count (no red
-// = 0 errors = clean). The shortest bar is the best capture phase.
-//
+
 // Because it compares against the *intended* pattern, it also separates read vs write
 // problems: if some phase reaches zero the fix is read-capture phase; if every phase
 // has errors (at the same words) the problem is on the write/storage side.
-//
-// Uses the same 3-output PLL as top_sdram_color (clk_sdram, clk_pix, clk90) — proven to
-// lock. `define SIMULATION bypasses the PLL.
+
+// Uses a 3-output PLL: clk_sdram, clk_pix, and clk90.
+// `define SIMULATION bypasses the PLL.
 
 module top_sdram_cal #(
     parameter int WR_CLK_PHASE = 0,  // sdram_clk pin phase: 0/1/2/3 = 0/90/180/270 deg.
@@ -21,11 +16,11 @@ module top_sdram_cal #(
     parameter int TEST_COL     = 0,  // (SPLIT=0) start column within the row
     parameter int TEST_LEN     = 256,// (SPLIT=0) burst length. col0/len256=clean baseline;
                                      // col0/len512=full page; col256/len256=ends at page edge.
-    // ---- doc-preserving fix candidates (pass through to sdram_ctrl) ----
+    // doc-preserving fix candidates (pass through to sdram_ctrl).
     parameter int BURST_MODE   = 0,  // 0 = full-page burst, 1 = fixed BL=8 chunks (no page wrap)
     parameter int RD_GUARD     = 0,  // extra NOP cycles before PRECHARGE after a read burst
     parameter int WR_GUARD     = 0,  // extra NOP cycles before PRECHARGE after a write burst
-    // ---- PLL divisors (default = 100 MHz; override for the lower-frequency variant) ----
+    // PLL divisors (default = 100 MHz; override for the lower-frequency variant).
     parameter int CLKFB_DIV    = 4,  // f_sdram = 25 MHz * CLKFB_DIV  (4->100, 3->75)
     parameter int CLKOP_DIV    = 6,  // VCO = f_sdram * CLKOP_DIV must stay in 400-800 MHz
     parameter int CLKOS_DIV    = 20, // pixel clock divisor (VCO / CLKOS_DIV ~= 30 MHz)
@@ -64,7 +59,7 @@ module top_sdram_cal #(
         seg_len = SPLIT ? (s ? 10'd88 : 10'd512) : 10'(TEST_LEN);
     endfunction
 
-    // ---- Clocks: 0deg(sdram), 30MHz(pix), 90deg ----
+    // Clocks: 0deg(sdram), 30MHz(pix), 90deg.
     logic clk_sdram, clk_pix, clk90, pll_locked;
 `ifdef SIMULATION
     assign clk_sdram=CLK; assign clk_pix=CLK; assign clk90=CLK; assign pll_locked=1'b1;
@@ -99,7 +94,7 @@ module top_sdram_cal #(
         else if (!prst_cnt[7]) begin prst_cnt<=prst_cnt+8'd1; pix_rst<=1; end else pix_rst<=0;
     end
 
-    // ---- four-phase DQ capture ----
+    // four-phase DQ capture.
     logic [15:0] cap [0:3];
     always_ff @(posedge clk_sdram) cap[0] <= sdram_dq;  // 0
     always_ff @(posedge clk90)     cap[1] <= sdram_dq;  // 90
@@ -110,7 +105,7 @@ module top_sdram_cal #(
     logic [15:0] dq_in;
     always_comb dq_in = cap[cur_phase];
 
-    // ---- controller ----
+    // controller.
     logic        req_valid, req_wr, req_ready, wr_valid, wr_ready, rd_valid, done;
     logic [24:0] req_addr;
     logic [9:0]  req_len;
@@ -135,7 +130,7 @@ module top_sdram_cal #(
                        (WR_CLK_PHASE == 1) ? clk90     :
                        (WR_CLK_PHASE == 2) ? ~clk_sdram : ~clk90;
 
-    // ---- calibration FSM (segment-aware: NSEG row segments per access) ----
+    // calibration FSM (segment-aware: NSEG row segments per access).
     typedef enum logic [2:0] { S_INIT, S_WREQ, S_WDATA, S_WWAIT, S_RREQ, S_RDATA, S_RWAIT } st_e;
     st_e st;
     logic [9:0] widx, ridx;          // global word index across segments
@@ -191,7 +186,7 @@ module top_sdram_cal #(
         end
     end
 
-    // ---- LCD: 4 vertical bands, red bar height = err[band] (px from top) ----
+    // LCD: 4 vertical bands, red bar height = err[band] (px from top).
     logic [10:0] x; logic [9:0] y; logic de, de_d;
     scan_timing #(.H_ACTIVE(H_ACTIVE), .H_TOTAL(H_TOTAL), .V_ACTIVE(V_ACTIVE), .V_TOTAL(V_TOTAL))
         u_t (.pclk(clk_pix), .rst(pix_rst), .x(x), .y(y), .de(de));

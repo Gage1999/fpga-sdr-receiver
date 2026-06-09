@@ -37,7 +37,7 @@ static struct fb *make_fb(uint16_t fill) {
 }
 
 // After compositing into the back buffer and swapping, the new back buffer
-// must equal the image we just composited — otherwise the next frame's
+// must equal the image we just composited - otherwise the next frame's
 // incremental scroll builds on stale (two-frames-ago) content. The old
 // plain-flip fb_swap left the new back untouched and failed this.
 T_CASE(swap_carries_image_forward) {

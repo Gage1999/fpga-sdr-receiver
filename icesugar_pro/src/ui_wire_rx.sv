@@ -1,39 +1,34 @@
-// ui_wire_rx — Pico -> ECP5 0xA5 UI wire protocol receiver.
-//
-// Consumes one wire_protocol.c frame per CS assertion. CRC-valid FULL_STATE and
-// PARTIAL_STATE frames update the subset of ui_state_t needed by the live
-// display path. Multi-byte ui_state_t fields are little-endian, matching
-// shared/include/ui_state.h.
+// ui_wire_rx - Pico -> ECP5 0xA5 UI wire protocol receiver.
 
 module ui_wire_rx #(
     parameter int UI_STATE_BYTES = 564,
     parameter int WIRE_MAX_PAYLOAD = 1024,
     parameter int UI_STATE_VERSION = 3
 ) (
-    input  logic spi_clk,
-    input  logic spi_cs_n,
-    input  logic spi_mosi,
+    input logic spi_clk,
+    input logic spi_cs_n,
+    input logic spi_mosi,
 
-    input  logic clk,
-    input  logic rst,
+    input logic clk,
+    input logic rst,
 
-    output logic [1:0]  layout,
-    output logic [1:0]  demod,
-    output logic [7:0]  volume,
+    output logic [1:0] layout,
+    output logic [1:0] demod,
+    output logic [7:0] volume,
     output logic [31:0] freq_hz,
     output logic [15:0] span_hz_log2,
-    output logic [7:0]  flags,
-    output logic [9:0]  touch_x,
-    output logic [9:0]  touch_y,
-    output logic [7:0]  active_button,
+    output logic [7:0] flags,
+    output logic [9:0] touch_x,
+    output logic [9:0] touch_y,
+    output logic [7:0] active_button,
     output logic [191:0] rds_line,
-    output logic        frame_valid
+    output logic frame_valid
 );
-    localparam logic [7:0] WIRE_MAGIC       = 8'ha5;
-    localparam logic [7:0] OP_FULL_STATE    = 8'h01;
+    localparam logic [7:0] WIRE_MAGIC = 8'ha5;
+    localparam logic [7:0] OP_FULL_STATE = 8'h01;
     localparam logic [7:0] OP_PARTIAL_STATE = 8'h02;
-    localparam logic [7:0] OP_TOUCH_EVENT   = 8'h03;
-    localparam logic [7:0] OP_HEARTBEAT     = 8'h04;
+    localparam logic [7:0] OP_TOUCH_EVENT = 8'h03;
+    localparam logic [7:0] OP_HEARTBEAT = 8'h04;
     localparam logic [7:0] OP_SPECTRUM_BINS = 8'h05;
 
     localparam logic [7:0] UI_BTN_NONE = 8'hff;
@@ -41,33 +36,33 @@ module ui_wire_rx #(
     localparam logic [31:0] UI_STATE_BYTES_W = UI_STATE_BYTES;
     localparam logic [31:0] UI_STATE_LAST_W = UI_STATE_BYTES_W - 32'd1;
     localparam logic [31:0] WIRE_MAX_PAYLOAD_W = WIRE_MAX_PAYLOAD;
-    localparam logic [7:0]  UI_VERSION_U8 = UI_VERSION_W[7:0];
+    localparam logic [7:0] UI_VERSION_U8 = UI_VERSION_W[7:0];
     localparam logic [15:0] UI_STATE_BYTES_U16 = UI_STATE_BYTES_W[15:0];
     localparam logic [16:0] UI_STATE_BYTES_U17 = UI_STATE_BYTES_W[16:0];
     localparam logic [16:0] UI_STATE_LAST_U17 = UI_STATE_LAST_W[16:0];
     localparam logic [15:0] WIRE_MAX_PAYLOAD_U16 = WIRE_MAX_PAYLOAD_W[15:0];
 
     typedef enum logic [2:0] {
-        S_DROP    = 3'd0,
-        S_OPCODE  = 3'd1,
-        S_LEN_LO  = 3'd2,
-        S_LEN_HI  = 3'd3,
+        S_DROP = 3'd0,
+        S_OPCODE = 3'd1,
+        S_LEN_LO = 3'd2,
+        S_LEN_HI = 3'd3,
         S_PAYLOAD = 3'd4,
-        S_CRC_LO  = 3'd5,
-        S_CRC_HI  = 3'd6
+        S_CRC_LO = 3'd5,
+        S_CRC_HI = 3'd6
     } parse_state_e;
 
-    logic       byte_valid;
-    logic       byte_sof;
+    logic byte_valid;
+    logic byte_sof;
     logic [7:0] byte_data;
 
     spi_frame_rx u_frame_rx (
-        .spi_clk   (spi_clk),
-        .spi_cs_n  (spi_cs_n),
-        .spi_mosi  (spi_mosi),
+        .spi_clk(spi_clk),
+        .spi_cs_n(spi_cs_n),
+        .spi_mosi(spi_mosi),
         .byte_valid(byte_valid),
-        .byte_sof  (byte_sof),
-        .byte_data (byte_data)
+        .byte_sof(byte_sof),
+        .byte_data(byte_data)
     );
 
     function automatic logic [15:0] crc16_next(input logic [15:0] crc_in,
@@ -84,46 +79,46 @@ module ui_wire_rx #(
     endfunction
 
     parse_state_e st_spi;
-    logic [7:0]  opcode_spi;
+    logic [7:0] opcode_spi;
     logic [15:0] payload_len_spi;
     logic [15:0] payload_pos_spi;
     logic [15:0] calc_crc_spi;
-    logic [7:0]  crc_lo_spi;
-    logic        frame_bad_spi;
+    logic [7:0] crc_lo_spi;
+    logic frame_bad_spi;
 
-    logic [1:0]  layout_spi, tmp_layout;
-    logic [1:0]  demod_spi, tmp_demod;
-    logic [7:0]  volume_spi, tmp_volume;
+    logic [1:0] layout_spi, tmp_layout;
+    logic [1:0] demod_spi, tmp_demod;
+    logic [7:0] volume_spi, tmp_volume;
     logic [31:0] freq_hz_spi, tmp_freq_hz;
     logic [15:0] span_hz_log2_spi, tmp_span_hz_log2;
-    logic [7:0]  flags_spi, tmp_flags;
-    logic [9:0]  touch_x_spi, tmp_touch_x;
-    logic [9:0]  touch_y_spi, tmp_touch_y;
-    logic [7:0]  active_button_spi, tmp_active_button;
+    logic [7:0] flags_spi, tmp_flags;
+    logic [9:0] touch_x_spi, tmp_touch_x;
+    logic [9:0] touch_y_spi, tmp_touch_y;
+    logic [7:0] active_button_spi, tmp_active_button;
     logic [191:0] rds_line_spi, tmp_rds_line;
-    logic        commit_toggle_spi;
+    logic commit_toggle_spi;
 
     logic [1:0] partial_phase_spi; // 0 off_lo, 1 off_hi, 2 len_lo, 3 len_hi; data when partial_data_spi
-    logic       partial_data_spi;
+    logic partial_data_spi;
     logic [15:0] chunk_off_spi;
     logic [15:0] chunk_len_spi;
     logic [15:0] chunk_pos_spi;
-    wire  [15:0] chunk_len_next = {byte_data, chunk_len_spi[7:0]};
-    wire  [16:0] chunk_end_next = {1'b0, chunk_off_spi} + {1'b0, chunk_len_next};
-    wire  [16:0] chunk_abs_off  = {1'b0, chunk_off_spi} + {1'b0, chunk_pos_spi};
+    wire [15:0] chunk_len_next = {byte_data, chunk_len_spi[7:0]};
+    wire [16:0] chunk_end_next = {1'b0, chunk_off_spi} + {1'b0, chunk_len_next};
+    wire [16:0] chunk_abs_off = {1'b0, chunk_off_spi} + {1'b0, chunk_pos_spi};
 
     task automatic load_tmp_from_current;
         begin
-            tmp_layout        <= layout_spi;
-            tmp_demod         <= demod_spi;
-            tmp_volume        <= volume_spi;
-            tmp_freq_hz       <= freq_hz_spi;
-            tmp_span_hz_log2  <= span_hz_log2_spi;
-            tmp_flags         <= flags_spi;
-            tmp_touch_x       <= touch_x_spi;
-            tmp_touch_y       <= touch_y_spi;
+            tmp_layout <= layout_spi;
+            tmp_demod <= demod_spi;
+            tmp_volume <= volume_spi;
+            tmp_freq_hz <= freq_hz_spi;
+            tmp_span_hz_log2 <= span_hz_log2_spi;
+            tmp_flags <= flags_spi;
+            tmp_touch_x <= touch_x_spi;
+            tmp_touch_y <= touch_y_spi;
             tmp_active_button <= active_button_spi;
-            tmp_rds_line      <= rds_line_spi;
+            tmp_rds_line <= rds_line_spi;
         end
     endtask
 

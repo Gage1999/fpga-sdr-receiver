@@ -8,12 +8,6 @@
 #include "regions.h"
 
 // Shifts the waterfall region down by 1 row and writes a new top row from
-// magnitudes[] colored through palette[]. Magnitudes are 0..255 indices
-// into the palette LUT.
-//
-// Hardware note: the FPGA does not literally copy. It uses a base-row
-// pointer modulo region height; scan-out applies the same modulo.
-// Visible behavior is identical, which is what the golden tests verify.
 void fb_compose_waterfall_step(fb_t *fb,
                                uint8_t layout,
                                const uint8_t magnitudes[800],
@@ -46,17 +40,7 @@ void fb_compose_goes_panel(fb_t *fb,
 
 // Fill a rectangular region with a solid color. Used on layout change.
 void fb_compose_clear(fb_t *fb, region_t r, uint16_t color);
-
-// ──────────────────────────────────────────────────────────────────────────────
 // ADS-B map mode.
-//
-// One tracked aircraft: position in logical 800x480 map pixels, plus the
-// compact metadata the map labels need. The renderer scales x/y into the
-// post-header map viewport. The Zynq side computes x/y by projecting decoded
-// ADS-B positions from UCR (the logical map center) onto the source map at
-// ADSB_RADIUS_MI = ADSB_R_OUTER px.
-// ──────────────────────────────────────────────────────────────────────────────
-
 #define ADSB_MAX_PLANES 16
 #define ADSB_IDENT_CHARS 8
 
@@ -75,11 +59,6 @@ typedef struct {
 } adsb_plane_t;
 
 // Redraws the whole ADS-B region: the host model loads the tracked Riverside
-// RGB565 basemap when present, darkens it for display contrast, and falls back
-// to a stylized UCR-centered placeholder otherwise. The header and ring labels
-// use the 8x16 font, so the ROM bundle is passed in. Hardware still expects the
-// same image in SDRAM (ADSB_BASEMAP) loaded from SPI config flash at boot — see
-// the architecture doc §6.
 void fb_compose_adsb_frame(fb_t *fb,
                            uint8_t layout,
                            const adsb_plane_t *planes,

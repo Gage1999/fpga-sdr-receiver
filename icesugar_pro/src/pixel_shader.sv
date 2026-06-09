@@ -1,17 +1,4 @@
-// Pixel shader — SystemVerilog port of icesugar_pro/model/src/pixel_shader.c.
-//
-// The C function is the executable spec. This module must produce identical
-// output for identical inputs; equivalence is enforced by the Verilator
-// parity harness in tb_pixel_shader.cpp.
-//
-// Implemented:
-//   - region_at + top dispatch
-//   - shade_overlay (touch crosshair)
-//   - shade_spectrum (with spectrum BRAM port)
-//   - shade_status (volume + center freq / RDS text / demod text + buttons)
-//   - spectrum-band text overlay
-//   - shade_image_mode_button (GOES/ADS-B floating mode/zoom buttons)
-
+// Pixel shader - SystemVerilog port of icesugar_pro/model/src/pixel_shader.c.
 module pixel_shader (
     input  logic [9:0]   x,
     input  logic [9:0]   y,
@@ -58,7 +45,7 @@ module pixel_shader (
 
     output logic [15:0]  pixel
 );
-    // ── constants mirroring shared headers ───────────────────────────────
+    // Constants mirroring shared headers
     localparam logic [2:0] R_NONE      = 3'd0;
     localparam logic [2:0] R_STATUS    = 3'd1;
     localparam logic [2:0] R_SPECTRUM  = 3'd2;
@@ -120,7 +107,7 @@ module pixel_shader (
 
     // status bar colors
     localparam logic [15:0] STATUS_BG     = 16'h10C4;  // RGB565(20,24,32)
-    localparam logic [15:0] IMG_BG        = 16'h0883;  // RGB565(12,18,24) — image-mode button bg
+    localparam logic [15:0] IMG_BG        = 16'h0883;  // RGB565(12,18,24) - image-mode button bg
     localparam logic [15:0] STATUS_FG     = 16'hDF5F;  // RGB565(220,235,255)
     localparam logic [15:0] STATUS_ACCENT = 16'h55FF;  // RGB565(80,190,255)
     localparam logic [15:0] STATUS_DIM    = 16'hA67C;  // RGB565(165,205,225)
@@ -135,7 +122,7 @@ module pixel_shader (
     localparam logic [15:0] CROSSHAIR_ARM = 16'hFFFF;
     localparam logic [15:0] CROSSHAIR_DOT = 16'hFA8A;
 
-    // ── region_at ────────────────────────────────────────────────────────
+    // Region_at
     function automatic logic [3:0] ui_button_slot_sv(input logic [2:0] btn);
         begin
             unique case (btn)
@@ -198,7 +185,7 @@ module pixel_shader (
         end
     end
 
-    // ── shade_spectrum ──────────────────────────────────────────────────
+    // Shade_spectrum
     logic [7:0]  span_bin_off;
     logic [8:0]  span_bin_sum;
     always_comb begin
@@ -232,7 +219,7 @@ module pixel_shader (
         else                                 spectrum_base_pixel = SPEC_BG;
     end
 
-    // ── shade_status ────────────────────────────────────────────────────
+    // Shade_status
     // Sub-region detection (lx_st = x, ly_st = y since status x0=y0=0).
     logic [9:0] lx_st;
     logic [9:0] ly_st;
@@ -259,9 +246,9 @@ module pixel_shader (
                          && (ly_st >= STATUS_DEMOD_Y) && (ly_st < 10'd32);
 
     // Button hit-test (spectrum-only layout). x0 values from ui_button_x0:
-    //   FREQ_UP slot7 = 368, FREQ_DN slot6 = 422, VOL_UP slot5 = 476,
-    //   VOL_DN slot4 = 530, MUTE slot3 = 584, ZOOM_OUT slot2 = 638,
-    //   ZOOM_IN slot1 = 692, MODE slot0 = 746. width = 48.
+    // FREQ_UP slot7 = 368, FREQ_DN slot6 = 422, VOL_UP slot5 = 476,
+    // VOL_DN slot4 = 530, MUTE slot3 = 584, ZOOM_OUT slot2 = 638,
+    // ZOOM_IN slot1 = 692, MODE slot0 = 746. width = 48.
     logic       in_button;
     logic [2:0] hit_btn_id;
     logic [9:0] hit_btn_x0;
@@ -303,7 +290,7 @@ module pixel_shader (
         img_btn_x0    = 10'd0;
         scan_btn_x0_img = 10'd0;
         if (in_img_layout && y >= UI_STATUS_BTN_TOP && y < UI_STATUS_BTN_BOT) begin
-            // MODE: visible in both image layouts (slot 0 → x0 = 746)
+            // MODE: visible in both image layouts (slot 0 -> x0 = 746)
             for (int i = 0; i < 8; i++) begin
                 scan_btn_x0_img = ui_button_x0_sv(i[2:0]);
                 if (ui_button_visible_sv(layout, i[2:0])
@@ -388,7 +375,7 @@ module pixel_shader (
         else                                                  text_path = TXT_NONE;
     end
 
-    // For status-bar text regions: lx-x0 → ch_idx and gx; ly-y0 → gy.
+    // For status-bar text regions: lx-x0 -> ch_idx and gx; ly-y0 -> gy.
     logic [9:0] freq_col_w;
     logic [9:0] freq_gy_w;
     assign freq_col_w = lx_st - STATUS_FREQ_X;
@@ -666,7 +653,7 @@ module pixel_shader (
                         ? brighten_rgb565(btn_text_base, 8'd48)
                         : btn_text_base;
         end else begin
-            // sprite path: transparent (0) → button bg; active → brighten 80.
+            // sprite path: transparent (0) -> button bg; active -> brighten 80.
             if (sprite_data == 16'h0000) begin
                 btn_pixel = any_btn_bg;
             end else if (btn_active) begin
@@ -701,7 +688,7 @@ module pixel_shader (
         else                           spectrum_pixel = spectrum_base_pixel;
     end
 
-    // ── top dispatch ────────────────────────────────────────────────────
+    // Top dispatch
     logic [15:0] base;
     always_comb begin
         unique case (region_kind)
@@ -719,7 +706,7 @@ module pixel_shader (
     logic [15:0] post_image_btn;
     assign post_image_btn = in_img_button ? btn_pixel : base;
 
-    // ── shade_overlay (touch crosshair) ──────────────────────────────────
+    // Shade_overlay (touch crosshair)
     logic signed [10:0] dx, dy;
     logic        [9:0]  adx, ady;
     assign dx  = $signed({1'b0, x}) - $signed({1'b0, touch_x});

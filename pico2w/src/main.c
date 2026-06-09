@@ -1,7 +1,7 @@
-// Pico firmware entry — STUB. Only built when BUILD_FIRMWARE=ON and
+// Pico firmware entry - STUB. Only built when BUILD_FIRMWARE=ON and
 // PICO_SDK_PATH points at the Pico SDK.
 //
-// Real bring-up will: stdio_init_all, init SPI master on spi0, init I²C
+// Real bring-up will: stdio_init_all, init SPI master on spi0, init I^2C
 // for the Goodix, then loop ui_logic_tick at 60 Hz.
 
 #ifdef TRIAD_FIRMWARE

@@ -62,9 +62,9 @@ module ui_wire_rx_tb;
     task automatic send_good_partial;
         begin
             // A5 02 13 00 payload CRC. Payload chunks:
-            //   span_hz_log2 @ off 8  = 16
-            //   freq_hz      @ off 4  = 101100000
-            //   volume       @ off 3  = 42
+            // Span_hz_log2 @ off 8  = 16
+            // Freq_hz      @ off 4  = 101100000
+            // Volume       @ off 3  = 42
             spi_cs_n = 1'b0; #20;
             spi_byte(8'ha5); spi_byte(8'h02); spi_byte(8'h13); spi_byte(8'h00);
             spi_byte(8'h08); spi_byte(8'h00); spi_byte(8'h02); spi_byte(8'h00);

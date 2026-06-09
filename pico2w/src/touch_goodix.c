@@ -1,6 +1,6 @@
 // Goodix capacitive touch controller driver.
 //
-// Bring-up (2026-06-01) pinned down the part: Goodix GT911, 7-bit I²C
+// Bring-up (2026-06-01) pinned down the part: Goodix GT911, 7-bit I^2C
 // address 0x5D, on i2c0 (SDA=GP4, SCL=GP5). Product-ID register 0x8140
 // reads ASCII "911". The INT pin level when RST is released selects the
 // address (low/floating -> 0x5D, high -> 0x14). The bring-up scanner lives

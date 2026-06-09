@@ -56,12 +56,6 @@ sdram_ctrl dut (
 // 100 MHz
 always #5 clk = ~clk;
 
-// -----------------------------------------------------------------------
-// Behavioral SDRAM model
-// IS42S16160B: 4 banks x 8192 rows x 512 cols x 16-bit
-// Write: data captured each cycle sdram_dq_oe=1 (behavioral, no strict CWL check)
-// Read:  data appears CL=2 cycles after CMD_READ
-// -----------------------------------------------------------------------
 logic [15:0] sdram_mem [0:4*8192*512-1];
 
 // Active row per bank
@@ -173,9 +167,7 @@ always @(posedge clk) begin
         $display("MODEL RD: mem[%0d]=%04h (cnt=%0d) at %0t ns", rd_addr_w, sdram_mem[rd_addr_w], rdp_cnt[2], $time);
 end
 
-// -----------------------------------------------------------------------
 // Stimulus
-// -----------------------------------------------------------------------
 localparam [15:0] PAT0 = 16'hA5C3;
 localparam [15:0] PAT1 = 16'h1234;
 localparam [15:0] PAT2 = 16'hDEAD;
@@ -213,7 +205,7 @@ initial begin
     @(posedge clk);
     $display("Init done at time %0t ns", $time);
 
-    // ---- WRITE ----
+    // WRITE.
     // Hold req_valid high until all data is fed (controller may be delayed by refresh cycles).
     // DUT inputs are driven with non-blocking assignments so they settle in the NBA region,
     // never racing the controller's posedge sampling (keeps iverilog and Verilator in agreement).
@@ -244,7 +236,7 @@ initial begin
     @(posedge clk);
     $display("Write done at %0t ns", $time);
 
-    // ---- READ ----
+    // READ.
     // Hold req_valid high until accepted (controller handles any pending refreshes first)
     req_valid <= 1'b1;
     req_wr    <= 1'b0;
@@ -275,15 +267,13 @@ initial begin
         end
     end
 
-    // ------------------------------------------------------------------
     // Full-page burst: 512-word write/read at a fresh row. Exercises the
     // 10-bit req_len / burst_cnt path that scan-out's phase-A fetch uses.
-    // ------------------------------------------------------------------
     $display("Page-burst test: 512-word write/read at row 4...");
     for (int i = 0; i < 512; i++)
         wr2[i] = 16'((i * 16'h0193) + 16'h1357);
 
-    // ---- WRITE 512 ----
+    // WRITE 512.
     req_valid <= 1'b1;
     req_wr    <= 1'b1;
     req_addr  <= 25'h001000;   // bank 0, row 4, col 0
@@ -308,7 +298,7 @@ initial begin
     wait(done === 1'b1);
     @(posedge clk);
 
-    // ---- READ 512 ----
+    // READ 512.
     req_valid <= 1'b1;
     req_wr    <= 1'b0;
     req_addr  <= 25'h001000;

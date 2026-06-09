@@ -1,7 +1,7 @@
 # PlutoSky 7020: Architecture
 
-This document covers the hardware, boot chain, and FPGA design decisions.
-Read this first before reading the build guide.
+This document summarizes the PlutoSky hardware role in the receiver, the Zynq
+boot flow, and the JP5 SPI link to the iCeSugar Pro.
 
 ---
 
@@ -12,8 +12,8 @@ Read this first before reading the build guide.
 3. [Boot Chain](#3-boot-chain)
 4. [FPGA Block Design](#4-fpga-block-design)
 5. [JP5 AXI SPI Link](#5-jp5-axi-spi-link)
-6. [AXI Address Map](#6-axi-address-map)
-7. [Design Decisions](#7-design-decisions)
+6. [Control Backchannel](#6-control-backchannel)
+7. [AXI Address Map](#7-axi-address-map)
 
 ---
 
@@ -29,7 +29,7 @@ Read this first before reading the build guide.
 | RF interface | 6-lane LVDS, up to 61.44 MSPS (30.72 MSPS complex) |
 | DDR3 | 32-bit wide (two 16-bit chips), 533 MHz |
 | FPGA banks | Bank 34 (2.5V HR), Bank 35 (1.8V HR), Bank 13 (3.3V HR) |
-| Flash | QSPI on MIO 1–6, JFFS2 filesystem on mtd2 |
+| Flash | QSPI on MIO 1-6, JFFS2 filesystem on mtd2 |
 | Storage | MicroSD card, FAT partition at /boot |
 | USB | USB 2.0 OTG, reset on MIO 46, gadget IP 192.168.2.1 |
 | Expansion | JP5 connector, AXI SPI signals, power rails (5V, 3.3V, 1.8V), GND |
@@ -53,63 +53,63 @@ All of these differences are applied in `system_bd.tcl`.
 
 ## 2. Signal Chain
 
-### RF receive path (current focus)
+### RF receive path
 
 ```
 Antenna
-  │  RF signal (137 MHz for NOAA APT, or any frequency in AD9363 range)
-  ▼
+  |  RF signal (137 MHz for NOAA APT, or any frequency in AD9363 range)
+  v
 AD9363 RF front end
-  │  LVDS 6-lane data bus (12 bits I + 12 bits Q at up to 61.44 MSPS)
-  ▼
+  |  LVDS 6-lane data bus (12 bits I + 12 bits Q at up to 61.44 MSPS)
+  v
 axi_ad9361 (PL core, ADI IP)
-  │  AXI-Stream: adc_data_i0[15:0], adc_data_q0[15:0]  (16-bit signed)
-  ▼
+  |  AXI-Stream: adc_data_i0[15:0], adc_data_q0[15:0]  (16-bit signed)
+  v
 CS8/CS16 IQ mux (ad_bus_mux)
-  │  Selects 8-bit CS8 or 16-bit CS16 mode per libiio request
-  ▼
+  |  Selects 8-bit CS8 or 16-bit CS16 mode per libiio request
+  v
 util_cpack2 (AXI-Stream packer)
-  │  Packs I/Q channels into a single AXI-Stream
-  ▼
+  |  Packs I/Q channels into a single AXI-Stream
+  v
 axi_ad9361_adc_dma (AXI DMAC)
-  │  DMA to DDR3 via AXI HP2 slave port
-  ▼
+  |  DMA to DDR3 via AXI HP2 slave port
+  v
 Linux kernel / libiio (PS, ARM Cortex-A9)
-  │  /dev/iio:device0, IQ samples available to userspace
-  ▼
+  |  /dev/iio:device0, IQ samples available to userspace
+  v
 libiio userspace (e.g. iio_readdev, Python)
 ```
 
 ### maia-sdr spectrometer path (parallel, for web UI)
 
 ```
-axi_ad9361 → 12-bit slice → maia_sdr IP (spectrometer)
-  │  DMA to DDR3 via AXI HP1 slave port
-  ▼
-maia_sdr.ko driver → /dev/maia-sdr-spectrometer
-  │  WebSocket stream
-  ▼
-maia-httpd (web server) → browser waterfall display
+axi_ad9361 -> 12-bit slice -> maia_sdr IP (spectrometer)
+  |  DMA to DDR3 via AXI HP1 slave port
+  v
+maia_sdr.ko driver -> /dev/maia-sdr-spectrometer
+  |  WebSocket stream
+  v
+maia-httpd (web server) -> browser waterfall display
 ```
 
 ### JP5 SPI path to iCeSugar Pro
 
 ```
-Linux userspace (`icesugar_stream`, `test_icesugar`)
-  │  /dev/mem mmap of AXI SPI registers at 0x7C440000
-  ▼
+Linux userspace (`sdr_main`, optional `icesugar_stream` diagnostic)
+  |  /dev/mem mmap of AXI SPI registers at 0x7C440000
+  v
 AXI Quad SPI (`axi_spi_jp5`)
-  │  8-bit SPI transfers, Mode 3, manual CS
-  ▼
+  |  8-bit SPI transfers, Mode 3, manual CS
+  v
 JP5 pins, Bank 13 LVCMOS33
-  │  SCK, MOSI, CS; MISO present but unused by current IQ stream
-  ▼
+  |  SCK, MOSI, CS; MISO carries the control backchannel
+  v
 iCeSugar Pro CS0 SPI receiver
-  │
-  ▼
+  |
+  v
 TLV-IQ unpacking
-  │
-  ▼
+  |
+  v
 FFT/waterfall through SDRAM display stack, plus FM demod/audio
 ```
 
@@ -119,29 +119,29 @@ FFT/waterfall through SDRAM display stack, plus FM demod/audio
 
 ```
 Power on
-  │
-  ▼
+  |
+  v
 FSBL (First Stage Bootloader), from BOOT.BIN partition 0
-  │  Initializes PS: DDR, PLL, MIO pin mux, clock gating
-  │  Programs PL with bitstream from BOOT.BIN partition 1
-  │  Hands off to U-Boot
-  ▼
+  |  Initializes PS: DDR, PLL, MIO pin mux, clock gating
+  |  Programs PL with bitstream from BOOT.BIN partition 1
+  |  Hands off to U-Boot
+  v
 U-Boot, from BOOT.BIN partition 2 (load/exec 0x04000000)
-  │  Reads uEnv.txt from SD card FAT partition
-  │  Loads uImage (kernel) and devicetree.dtb from SD card
-  ▼
+  |  Reads uEnv.txt from SD card FAT partition
+  |  Loads uImage (kernel) and devicetree.dtb from SD card
+  v
 Linux kernel (armv7l, SMP, PREEMPT)
-  │  Initramfs rootfs (read-only ramdisk, cannot brick the OS)
-  │  Drivers load: cf_axi_adc, axi-ad9361, maia_sdr, dma-axi-dmac
-  │  AD9361 initializes + runs dig_tune (LVDS calibration)
-  ▼
+  |  Initramfs rootfs (read-only ramdisk, cannot brick the OS)
+  |  Drivers load: cf_axi_adc, axi-ad9361, maia_sdr, dma-axi-dmac
+  |  AD9361 initializes + runs dig_tune (LVDS calibration)
+  v
 Init scripts
-  │  S20jffs2: mounts mtd2 → /mnt/jffs2
-  │  S98autostart: sources /mnt/jffs2/autorun.sh (if present)
-  ▼
+  |  S20jffs2: mounts mtd2 -> /mnt/jffs2
+  |  S98autostart: sources /mnt/jffs2/autorun.sh (if present)
+  v
 autorun.sh
-  │  Installs SSH authorized key from /mnt/jffs2/ssh/authorized_keys
-  ▼
+  |  Installs SSH authorized key from /mnt/jffs2/ssh/authorized_keys
+  v
 Board ready, SSH available at 192.168.2.1
 ```
 
@@ -169,13 +169,13 @@ with adaptations for the fishball7020's LVDS RF interface and CLG400 PS7 configu
 | `axi_ad9361` | axi_ad9361 (ADI) | AD9361/AD9363 LVDS data interface + register map |
 | `axi_spi_jp5` | axi_quad_spi | JP5 SPI master for iCeSugar IQ/display stream |
 | `maia_sdr` | maia_sdr_maia_iio | Spectrometer, recorder, IQ correction (maia-hdl) |
-| `axi_ad9361_adc_dma` | axi_dmac (ADI) | ADC → DDR3 DMA (HP2 slave) |
-| `axi_ad9361_dac_dma` | axi_dmac (ADI) | DDR3 → DAC DMA (HP2 slave) |
+| `axi_ad9361_adc_dma` | axi_dmac (ADI) | ADC -> DDR3 DMA (HP2 slave) |
+| `axi_ad9361_dac_dma` | axi_dmac (ADI) | DDR3 -> DAC DMA (HP2 slave) |
 | `maia_sdr_clk` | clk_wiz | MMCM: 62.5 / 125 / 187.5 MHz for maia_sdr |
 | `cpack` / `tx_upack` | util_cpack2 / util_upack2 | IQ channel pack/unpack |
 | `muxcs8` / `muxcs8_tx_*` | ad_bus_mux | CS8/CS16 IQ mode selection |
 | `sys_rstgen` | proc_sys_reset | Reset sequencing |
-| `sys_concat_intc` | xlconcat | 16-port interrupt concatenator → IRQ_F2P |
+| `sys_concat_intc` | xlconcat | 16-port interrupt concatenator -> IRQ_F2P |
 
 ### Source files
 
@@ -224,7 +224,7 @@ Current JP5 pin use:
 | 7 | V10 | SCK | PlutoSky to iCeSugar |
 | 9 | U9 | MOSI | PlutoSky to iCeSugar |
 | 13 | T9 | CS | PlutoSky to iCeSugar |
-| 11 | U10 | MISO | iCeSugar to PlutoSky, unused for current IQ stream |
+| 11 | U10 | MISO | iCeSugar to PlutoSky control backchannel |
 
 The current userspace code sends one IQ sample as four MSB-first bytes:
 
@@ -233,18 +233,61 @@ The current userspace code sends one IQ sample as four MSB-first bytes:
 ```
 
 `plutosky/tests/test_spi_reg.c` verifies the AXI SPI register block.
-`plutosky/tests/test_icesugar.c` and `plutosky/src/icesugar_stream.c` use the
-controller to send synthetic or live IQ to the iCeSugar Pro.
+`plutosky/src/main.c` builds into `sdr_main`, the final FM/GOES/ADS-B runtime.
+`plutosky/src/icesugar_stream.c` remains as a standalone IQ streamer diagnostic.
 
-The full link picture — what the ECP5 does with this IQ (FM demod, FFT/
-waterfall), the Pico command channel, and the open retune/GOES/ADS-B paths — is
+The full link picture - what the ECP5 does with IQ, FM demod, FFT/waterfall,
+the Pico command channel, and result TLVs for other modes - is
 in [`docs/fpga-sdr-receiver-interface.md`](../../docs/fpga-sdr-receiver-interface.md).
-Note the LO is currently set by `icesugar_stream` here on the Pluto; there is no
-path back from the ECP5/Pico to retune the radio (JP5 MISO is unused).
+The final runtime polls JP5 MISO for mode/frequency commands from the ECP5/Pico
+control path.
 
 ---
 
-## 6. AXI Address Map
+## 6. Control Backchannel
+
+The Pico sends UI state to the iCeSugar Pro. The ECP5 applies local audio
+controls and relays radio commands to PlutoSky over JP5 MISO while PlutoSky is
+clocking the SPI link.
+
+```text
+Pico UI
+  -> iCeSugar UI command receiver
+  -> ECP5 control registers
+  -> JP5 MISO backchannel
+  -> PlutoSky sdr_main
+  -> AD9363 / mode configuration
+```
+
+Backchannel frames use the shared `0xA5` wire format:
+
+```text
+0xA5 opcode len_lo len_hi payload... crc_lo crc_hi
+```
+
+For radio control:
+
+| Field | Value |
+|---|---|
+| Opcode | `OP_RADIO_COMMAND` (`0x06`) |
+| Payload length | `5` |
+| Payload | `cmd:u8`, `arg:u32` little-endian |
+
+Supported commands:
+
+| Command | Purpose |
+|---|---|
+| `SET_MODE` | Switch between FM, GOES, and ADS-B |
+| `SET_FREQ` | Retune FM mode |
+| `SET_VOLUME` | Ignored by PlutoSky; handled locally by the ECP5 audio path |
+
+`sdr_main` drains the SPI RX FIFO during normal TLV traffic and sends small
+backchannel poll packets when needed, so commands are still visible during
+modes with sparse outgoing data.
+
+---
+
+## 7. AXI Address Map
 
 These addresses must match the tezuka device tree (`devicetree.dtb`) and the
 `maia_sdr.ko` driver. Do not change them without also updating the DTB.

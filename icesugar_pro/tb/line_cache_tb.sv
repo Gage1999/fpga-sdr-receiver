@@ -1,8 +1,4 @@
 // Testbench for line_cache.sv
-// Fills all 4 slots with distinct patterns on the write clock, then reads them
-// back on a slower, independent read clock and checks data integrity and slot
-// isolation. DUT inputs are driven with non-blocking assignments so they never
-// race the DUT's own clock edges (keeps iverilog and Verilator in agreement).
 
 `timescale 1ns/1ps
 
@@ -33,7 +29,7 @@ module line_cache_tb;
     initial begin
         w_en = 0; w_slot = 0; w_col = 0; w_data = 0;
 
-        // ---- Fill every slot/column on the write clock ----
+        // Fill every slot/column on the write clock.
         for (int s = 0; s < 4; s++) begin
             for (int c = 0; c < 800; c++) begin
                 @(posedge wclk);
@@ -49,7 +45,7 @@ module line_cache_tb;
         // Let the last write land
         repeat (4) @(posedge wclk);
 
-        // ---- Read back on the read clock, verify ----
+        // Read back on the read clock, verify.
         for (int s = 0; s < 4; s++) begin
             for (int c = 0; c < 800; c++) begin
                 @(posedge rclk);

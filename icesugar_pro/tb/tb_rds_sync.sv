@@ -1,6 +1,6 @@
 `timescale 1ns/1ps
 
-// tb_rds_sync — feed synthesized RDS groups (with valid checkwords) bit-by-bit
+// tb_rds_sync - feed synthesized RDS groups (with valid checkwords) bit-by-bit
 // and confirm the synchronizer locks and emits every group with the correct
 // information words and block_ok == 4'b1111.
 

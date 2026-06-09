@@ -1,9 +1,4 @@
 // Standalone FM audio bring-up top.
-//
-// This is the hardware-proven audio baseline: Pluto SPI IQ is buffered deeply,
-// read out at a fixed sample rate, demodulated in fabric, filtered/decimated,
-// and sent to the DAC over I2S. Diagnostic parameters can bypass Pluto/SPI or
-// bypass FM demod to isolate failures without changing the pinout.
 module fm_audio_test_top #(
     parameter FM_CIC_R     = 8,
     parameter I2S_AUDIO_RATE = 32_552,  // 25 MHz / (2*6*64), matched by IQ_SAMPLE_RATE/8

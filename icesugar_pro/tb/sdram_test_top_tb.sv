@@ -27,7 +27,7 @@ module sdram_test_top_tb;
         .sdram_ba(sdram_ba), .sdram_a(sdram_a), .sdram_dm(sdram_dm), .sdram_dq(sdram_dq)
     );
 
-    // ---- Behavioral SDRAM on the shared DQ bus ----
+    // Behavioral SDRAM on the shared DQ bus.
     logic [15:0] mem [0:8192*512-1];   // bank 0
     logic [12:0] active_row [0:3];
     logic [1:0]  wr_ba; logic [9:0] wr_col; int wr_burst; logic wr_active;
@@ -76,7 +76,7 @@ module sdram_test_top_tb;
 
     assign sdram_dq = rdp_v[2] ? mem[faddr(rdp_row[2], rdp_col[2] + rdp_cnt[2])] : 16'hzzzz;
 
-    // ---- Checker ----
+    // Checker.
     initial begin
         wait (dut.test_done === 1'b1);
         @(posedge CLK);

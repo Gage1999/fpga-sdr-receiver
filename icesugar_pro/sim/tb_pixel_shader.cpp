@@ -1,11 +1,4 @@
-// Verilator parity harness for icesugar_pro/src/pixel_shader.sv (bare core).
-//
-// Drives the C reference model and the SV `pixel_shader` with identical
-// per-pixel inputs and reports byte-equality stats. Until every shade_* is
-// translated, mismatches outside the implemented regions are expected.
-//
-// Test cases mirror tests/test_pixel_shader.c — same ui_state setups, same
-// FB fills — so progress here tracks the host-side golden tests.
+// Verilator parity harness for the bare pixel shader core.
 
 #include <cstdio>
 #include <cstdlib>
@@ -42,9 +35,7 @@ void drive_state(Vpixel_shader *dut, const shader_state_t *st) {
     dut->touch_x       = st->touch_x;
     dut->touch_y       = st->touch_y;
 
-    // Wide packed buses — Verilator's VlWide is uint32_t[]; memcpy works on
-    // little-endian hosts (macOS/arm64 here) because bit 0 of the SV port
-    // corresponds to byte 0's LSB.
+    // Packed SV buses map cleanly to VlWide on little-endian hosts.
     std::memcpy(&dut->freq_text,      st->freq_text,      sizeof(st->freq_text));
     std::memcpy(&dut->band_text,      st->band_text,      sizeof(st->band_text));
     std::memcpy(&dut->demod_label,    st->demod_label,    sizeof(st->demod_label));
@@ -84,10 +75,7 @@ Result run_case(const char *name, const ui_state_t *ui, uint16_t fb_fill) {
         for (uint16_t x = 0; x < SCREEN_W; x++) {
             dut->x = x;
             dut->y = y;
-            // First eval propagates region/spectrum logic so spectrum_bin_addr
-            // settles. We then back the BRAM port with the matching C table
-            // entry — this mirrors how the real BRAM port responds on the
-            // following cycle. A second eval finalizes the pixel value.
+            // Two evals model the BRAM address/data cycle.
             dut->eval();
             dut->spectrum_bin_data = st.spectrum_bins[dut->spectrum_bin_addr];
             dut->font16_data       = roms.font_16x32[dut->font16_addr];
@@ -136,9 +124,7 @@ int main(int argc, char **argv) {
         total_match += r.matched;
     }
     {
-        // Mirrors test_pixel_shader.c's spectrum_with_bars: triangle wave
-        // across the 256 bins so the spectrum region renders varied bar
-        // heights — exercises the bin BRAM port across most of its range.
+        // Triangle bins exercise most spectrum RAM addresses.
         ui_state_t ui; ui_state_default(&ui);
         for (int i = 0; i < UI_SPECTRUM_BINS; i++) {
             uint16_t v = (uint16_t)(((i < 128 ? i : 255 - i) * 65535) / 128);
@@ -166,8 +152,7 @@ int main(int argc, char **argv) {
         total_match += r.matched;
     }
     {
-        // GOES image layout: full-screen FB pass-through plus a floating MODE
-        // button. Surfaces the still-stubbed shade_image_mode_button path.
+        // GOES image layout with floating mode button.
         ui_state_t ui; ui_state_default(&ui);
         ui.demod  = DEMOD_GOES;
         ui.layout = LAYOUT_GOES_FULL;
@@ -176,9 +161,7 @@ int main(int argc, char **argv) {
         total_match += r.matched;
     }
     {
-        // ADS-B image layout: floating MODE + ZOOM_IN + ZOOM_OUT buttons. Same
-        // story — full match outside the buttons; SV will be wrong inside them
-        // until shade_image_mode_button lands.
+        // ADS-B image layout with floating controls.
         ui_state_t ui; ui_state_default(&ui);
         ui.demod        = DEMOD_ADSB;
         ui.layout       = LAYOUT_ADSB_FULL;
@@ -191,7 +174,6 @@ int main(int argc, char **argv) {
     double pct = 100.0 * static_cast<double>(total_match) / static_cast<double>(total_pix);
     std::printf("\noverall: %zu / %zu (%6.2f%%)\n", total_match, total_pix, pct);
 
-    // Harness exits 0 even on mismatches — we want CI/dev iteration to print
-    // the percentage and keep going. Wire a strict-mode flag later.
+    // Keep this report-only while shader coverage is still expanding.
     return 0;
 }

@@ -234,7 +234,6 @@ int main(void) {
     gpio_pull_up(I2C_SDA);   // weak internal pull-ups (~50-80k); see notes re: 4.7k
     gpio_pull_up(I2C_SCL);
 
-    // Wait up to ~5 s for a serial monitor, but don't block forever.
     for (int i = 0; i < 100 && !stdio_usb_connected(); i++) sleep_ms(50);
 
     int iter = 0;

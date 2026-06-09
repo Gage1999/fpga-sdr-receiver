@@ -1,8 +1,4 @@
 // Testbench for spi_frame_rx.sv
-// Drives MSB-first SPI bytes inside CS-framed windows and checks that each byte
-// is deserialized correctly, that byte_sof marks only the first byte of a frame,
-// and crucially that the LAST byte of a frame is captured on its own clock edge
-// (CS deasserts immediately after, with no trailing clock).
 
 `timescale 1ns/1ps
 
@@ -55,7 +51,7 @@ module spi_frame_rx_tb;
     initial begin
         #100;
 
-        // ---- Frame 1: three bytes, CS deasserts right after the last bit ----
+        // Frame 1: three bytes, CS deasserts right after the last bit.
         spi_cs_n = 0; #20;
         spi_byte(8'hC3);
         spi_byte(8'h01);
@@ -70,7 +66,7 @@ module spi_frame_rx_tb;
         check("f1.sof1",  cap_sof[1] == 1'b0);
         check("f1.sof2",  cap_sof[2] == 1'b0);
 
-        // ---- Frame 2: SOF must re-arm after CS went high ----
+        // Frame 2: SOF must re-arm after CS went high.
         cap_n = 0;
         spi_cs_n = 0; #20;
         spi_byte(8'hAA);

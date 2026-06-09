@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-fm_test.py — End-to-end FM receive test for PlutoSky 7020 (fishball7020)
+fm_test.py - End-to-end FM receive test for PlutoSky 7020 (fishball7020)
 
 Tunes the AD9361 to an FM station, captures IQ via SSH/iio_readdev,
 demodulates FM mono, and writes a 48 kHz 16-bit WAV.
@@ -23,12 +23,12 @@ try:
 except ImportError:
     sys.exit("pip install numpy scipy")
 
-# ── data directory (tests/data/ relative to this file) ───────────────────────
+# -- data directory (tests/data/ relative to this file) -----------------------
 
 DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
 os.makedirs(DATA_DIR, exist_ok=True)
 
-# ── tuneable constants ────────────────────────────────────────────────────────
+# -- tuneable constants --------------------------------------------------------
 
 DEFAULT_FREQ_MHZ = 95.1
 DEFAULT_DURATION = 5          # seconds
@@ -40,13 +40,13 @@ SSH_KEY          = os.environ.get("PLUTO_SSH_KEY")
 # the SSH transfer to ~50 MB for 5 s.
 CAPTURE_RATE     = 2_500_000  # Hz
 
-FM_MAX_DEV       = 75_000     # Hz — US/EU FM deviation limit
-AUDIO_BW         = 15_000     # Hz — mono audio passband
-RF_BW            = 2_000_000  # Hz — AD9361 analog RF filter width
-AUDIO_RATE       = 48_000     # Hz — WAV output sample rate
+FM_MAX_DEV       = 75_000     # Hz - US/EU FM deviation limit
+AUDIO_BW         = 15_000     # Hz - mono audio passband
+RF_BW            = 2_000_000  # Hz - AD9361 analog RF filter width
+AUDIO_RATE       = 48_000     # Hz - WAV output sample rate
 IIO_BUF          = 8192       # iio_readdev buffer size (frames, power of 2)
 
-# ── SSH helpers ───────────────────────────────────────────────────────────────
+# -- SSH helpers ---------------------------------------------------------------
 
 def _ssh(ip, key):
     return ["ssh",
@@ -71,7 +71,7 @@ def ssh_bytes(ip, key, cmd, timeout=180):
         raise RuntimeError(f"SSH capture failed:\n  {r.stderr.decode(errors='replace').strip()}")
     return r.stdout
 
-# ── AD9361 configuration ──────────────────────────────────────────────────────
+# -- AD9361 configuration ------------------------------------------------------
 
 def find_iio(ip, key, name):
     out = ssh_text(ip, key,
@@ -80,7 +80,7 @@ def find_iio(ip, key, name):
         f'[ "$n" = "{name}" ] && echo "$d" && break; done')
     if not out:
         raise RuntimeError(
-            f"IIO device '{name}' not found — check `ls /sys/bus/iio/devices/` on board")
+            f"IIO device '{name}' not found - check `ls /sys/bus/iio/devices/` on board")
     return out
 
 def configure(ip, key, freq_hz, rate_hz, rf_bw_hz):
@@ -95,7 +95,7 @@ def configure(ip, key, freq_hz, rate_hz, rf_bw_hz):
     print(f"  Rate = {rate/1e6:.4f} MSPS")
     return rate
 
-# ── IQ capture ────────────────────────────────────────────────────────────────
+# -- IQ capture ----------------------------------------------------------------
 
 def capture(ip, key, n_samples, buf=IIO_BUF):
     mb = n_samples * 4 / 1e6
@@ -119,13 +119,13 @@ def parse_iq(raw):
     s = np.frombuffer(raw, dtype="<i2")
     return (s[0::2].astype(np.float32) + 1j * s[1::2].astype(np.float32)) / 2048.0
 
-# ── spectrum report ───────────────────────────────────────────────────────────
+# -- spectrum report -----------------------------------------------------------
 
 def spectrum_report(iq, fs):
     """
     Print the top power peaks in the baseband spectrum (relative to the
     noise floor) so we can verify the FM station is actually being received.
-    A strong FM station should appear as a peak within ±100 kHz of 0 Hz.
+    A strong FM station should appear as a peak within +/-100 kHz of 0 Hz.
     """
     n = min(32768, len(iq))
     win = np.hanning(n)
@@ -146,10 +146,10 @@ def spectrum_report(iq, fs):
         # Is there energy near 0 Hz (the tuned station)?
         station_peak = any(abs(freqs[i]) < 200_000 for i in peaks)
         if not station_peak:
-            print("  NOTE: no strong peak near 0 Hz — station may not be in range")
+            print("  NOTE: no strong peak near 0 Hz - station may not be in range")
         return True
     else:
-        print("  No peaks above noise floor — signal is likely too weak")
+        print("  No peaks above noise floor - signal is likely too weak")
         print("  Check antenna connection and station frequency")
         return False
 
@@ -159,7 +159,7 @@ def save_spectrum_png(iq, fs, path):
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
     except ImportError:
-        print("matplotlib not installed — skipping spectrum PNG")
+        print("matplotlib not installed - skipping spectrum PNG")
         return
     n = min(65536, len(iq))
     f, psd = signal.welch(iq[:n], fs=fs, nperseg=4096, return_onesided=False)
@@ -170,13 +170,13 @@ def save_spectrum_png(iq, fs, path):
     plt.plot(f / 1e3, 10 * np.log10(np.abs(psd) + 1e-30))
     plt.xlabel("Frequency offset from LO (kHz)")
     plt.ylabel("PSD (dBFS/Hz)")
-    plt.title(f"Baseband spectrum — Welch estimate")
+    plt.title(f"Baseband spectrum - Welch estimate")
     plt.grid(True, alpha=0.4)
     plt.tight_layout()
     plt.savefig(path, dpi=150)
     print(f"  Spectrum saved to {path}")
 
-# ── FM demodulation ───────────────────────────────────────────────────────────
+# -- FM demodulation -----------------------------------------------------------
 
 def demod_fm(iq, fs, audio_rate=AUDIO_RATE, max_dev=FM_MAX_DEV, audio_bw=AUDIO_BW):
     """
@@ -240,13 +240,13 @@ def demod_fm(iq, fs, audio_rate=AUDIO_RATE, max_dev=FM_MAX_DEV, audio_bw=AUDIO_B
     crest = 20 * np.log10(peak / (rms + 1e-12))
     print(f"  Audio RMS   = {20*np.log10(rms+1e-12):.1f} dBFS  peak={20*np.log10(peak+1e-12):.1f} dBFS  crest={crest:.1f} dB  DC={dc:.4f}")
     if abs(dc) > 0.05:
-        print(f"  WARNING: large audio DC bias ({dc:.4f}) — de-emphasis feeding back?")
+        print(f"  WARNING: large audio DC bias ({dc:.4f}) - de-emphasis feeding back?")
     if crest < 6:
-        print(f"  WARNING: low crest factor ({crest:.1f} dB) — audio may be clipping/compressed")
+        print(f"  WARNING: low crest factor ({crest:.1f} dB) - audio may be clipping/compressed")
 
     return audio.astype(np.float32)
 
-# ── WAV output ────────────────────────────────────────────────────────────────
+# -- WAV output ----------------------------------------------------------------
 
 def write_wav(path, audio, rate):
     peak = np.max(np.abs(audio))
@@ -262,11 +262,11 @@ def write_wav(path, audio, rate):
     kb = os.path.getsize(path) // 1024
     print(f"Wrote {path}  ({len(a16)/rate:.1f} s  {rate} Hz  16-bit mono  {kb} KB)")
 
-# ── main ──────────────────────────────────────────────────────────────────────
+# -- main ----------------------------------------------------------------------
 
 def main():
     ap = argparse.ArgumentParser(
-        description="FM receive test — PlutoSky 7020",
+        description="FM receive test - PlutoSky 7020",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     ap.add_argument("--freq",     type=float, default=DEFAULT_FREQ_MHZ,
                     help="FM station frequency (MHz)")
@@ -280,7 +280,7 @@ def main():
     ap.add_argument("--key",      default=SSH_KEY,   help="SSH private key path")
     ap.add_argument("--save-iq",  metavar="FILE",    help="Save raw IQ bytes to FILE")
     ap.add_argument("--load-iq",  metavar="FILE",
-                    help="Skip board capture — load raw IQ from FILE instead")
+                    help="Skip board capture - load raw IQ from FILE instead")
     ap.add_argument("--spectrum", metavar="PNG",
                     help="Save baseband spectrum plot to PNG file")
     args = ap.parse_args()
@@ -288,13 +288,13 @@ def main():
     freq_hz = int(args.freq * 1e6)
 
     print("=" * 52)
-    print(f"  FM Receive Test — PlutoSky 7020")
+    print(f"  FM Receive Test - PlutoSky 7020")
     print(f"  Station  : {args.freq} MHz")
     print(f"  Duration : {args.duration} s")
     print(f"  Output   : {args.output}")
     print("=" * 52)
 
-    # ── capture ──────────────────────────────────────────────────────────────
+    # -- capture --------------------------------------------------------------
     if args.load_iq:
         print(f"\nLoading IQ from {args.load_iq} ...")
         raw = open(args.load_iq, "rb").read()
@@ -311,14 +311,14 @@ def main():
         open(args.save_iq, "wb").write(raw)
         print(f"IQ saved to {args.save_iq}")
 
-    # ── parse and inspect ─────────────────────────────────────────────────────
+    # -- parse and inspect -----------------------------------------------------
     iq = parse_iq(raw)
     power = 10 * np.log10(np.mean(np.abs(iq)**2) + 1e-30)
     print(f"\nIQ power : {power:.1f} dBFS  ({len(iq)} samples)")
     if power < -35:
-        print("  WARNING: signal is very weak — check antenna and station freq")
+        print("  WARNING: signal is very weak - check antenna and station freq")
     elif power > -1:
-        print("  WARNING: signal may be saturated — consider reducing gain")
+        print("  WARNING: signal may be saturated - consider reducing gain")
 
     print("\nSpectrum check:")
     has_signal = spectrum_report(iq, actual_rate)
@@ -327,11 +327,11 @@ def main():
         print()
         save_spectrum_png(iq, actual_rate, args.spectrum)
 
-    # ── demodulate ────────────────────────────────────────────────────────────
+    # -- demodulate ------------------------------------------------------------
     print()
     audio = demod_fm(iq, actual_rate)
 
-    # ── write WAV ─────────────────────────────────────────────────────────────
+    # -- write WAV -------------------------------------------------------------
     print()
     write_wav(args.output, audio, AUDIO_RATE)
 

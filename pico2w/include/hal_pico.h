@@ -8,11 +8,6 @@
 
 #include "touch.h"
 
-// HAL contract — the only dependency surface for firmware/src/ui_logic.c.
-//
-// The host harness implements these in host/src/hal_host.c.
-// The real Pico build implements these in firmware/src/hal_pico.c.
-
 uint64_t hal_now_us(void);
 
 void hal_log(const char *fmt, ...);

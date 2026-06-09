@@ -6,7 +6,7 @@
 #include "fb_accessor.h"
 #include "screen_config.h"
 
-// Concrete host framebuffer — a pair of uint16_t[SCREEN_H][SCREEN_W] buffers.
+// Concrete host framebuffer - a pair of uint16_t[SCREEN_H][SCREEN_W] buffers.
 // The opaque fb_t in shared/include/fb_accessor.h is defined here in the
 // host build. Hardware build will define its own fb_t backed by SDRAM.
 

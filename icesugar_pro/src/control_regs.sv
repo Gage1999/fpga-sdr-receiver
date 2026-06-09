@@ -16,7 +16,7 @@ localparam CMD_SET_MODE = 8'h01;
 localparam CMD_SET_VOLUME = 8'h02;
 localparam CMD_SET_FREQ = 8'h03;
 
-localparam MODE_FM   = 3'd0;
+localparam MODE_FM = 3'd0;
 localparam MODE_GOES = 3'd2;
 localparam MODE_ADSB = 3'd3;
 

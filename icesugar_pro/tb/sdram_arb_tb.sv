@@ -1,8 +1,4 @@
 // Testbench for sdram_arb.sv
-// Drives all three clients at once and checks: (1) fixed-priority service order
-// 0,1,2; (2) read data routed to the correct client; (3) at most one client ever
-// holds the bus (mutual exclusion). Uses a small deterministic mock controller so
-// the test isolates arbitration behavior (sdram_ctrl is verified separately).
 
 `timescale 1ns/1ps
 
@@ -57,7 +53,6 @@ module mock_ctrl (
         end
     end
 endmodule
-
 
 module sdram_arb_tb;
     localparam int N = 3;
@@ -157,7 +152,7 @@ module sdram_arb_tb;
 
         repeat (6) @(posedge clk);
 
-        // ---- checks ----
+        // checks.
         if (order.size() != N) begin
             $display("FAIL: %0d transactions completed, expected %0d", order.size(), N);
             errors = errors + 1;

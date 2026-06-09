@@ -65,7 +65,7 @@ void fb_swap(fb_t *fb) {
     memcpy(new_back, old_back, SCREEN_W * SCREEN_H * sizeof(uint16_t));
 }
 
-// Mirror host/src/fb_host.c::fb_host_clear — clear BOTH planes (used on a
+// Mirror host/src/fb_host.c::fb_host_clear - clear BOTH planes (used on a
 // layout/mode change so newly exposed regions don't show stale pixels).
 void test_fb_clear(struct fb *fb, uint16_t color) {
     for (int y = 0; y < SCREEN_H; y++)

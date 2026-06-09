@@ -1,16 +1,16 @@
 module spectrum_zoom_decimator (
-    input  logic clk,
-    input  logic rst,
+    input logic clk,
+    input logic rst,
 
-    input  logic signed [15:0] in_i,
-    input  logic signed [15:0] in_q,
-    input  logic               in_valid,
-    input  logic [15:0]        span_hz_log2,
+    input logic signed [15:0] in_i,
+    input logic signed [15:0] in_q,
+    input logic in_valid,
+    input logic [15:0] span_hz_log2,
 
     output logic signed [15:0] out_i,
     output logic signed [15:0] out_q,
-    output logic               out_valid,
-    output logic [2:0]         decim_log2
+    output logic out_valid,
+    output logic [2:0] decim_log2
 );
 
     logic [2:0] decim_log2_next;

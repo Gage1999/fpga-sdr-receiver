@@ -12,7 +12,7 @@
 
 void synth_init(uint32_t seed);
 
-// One spectrum frame (256 bins, 0..65535) — call once per host_harness frame.
+// One spectrum frame (256 bins, 0..65535) - call once per host_harness frame.
 void synth_spectrum_bins(uint16_t bins[256]);
 
 // Spectrum frame generated over the current visible RF span. This is the host

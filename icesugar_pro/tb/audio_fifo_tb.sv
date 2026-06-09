@@ -1,4 +1,4 @@
-// Testbench for audio_fifo.sv — regression for the `full`-always-true bug that
+// Testbench for audio_fifo.sv - regression for the `full`-always-true bug that
 // kept the FIFO empty (silence). Checks it actually fills, drains, FWFT head is
 // correct, full asserts only at DEPTH, and skip/repeat (rpop_n 0/2) behave.
 

@@ -8,9 +8,6 @@ module fm_demod (
     output logic signed [15:0] audio_out,
     output logic audio_valid,
 
-    // Composite/MPX tap: the wideband discriminator output BEFORE de-emphasis and
-    // audio decimation. RDS rides on the 57 kHz subcarrier in this signal, so the
-    // RDS receiver taps here rather than the de-emphasized audio path.
     output logic signed [15:0] mpx_out,
     output logic mpx_valid
 );
@@ -19,17 +16,10 @@ logic signed [15:0] i_prev, q_prev;
 logic signed [31:0] cross1, cross2;
 logic signed [32:0] demod_raw;
 logic signed [15:0] demod_scaled;
-
-// Arithmetic right-shift demod_raw by 8, widened to detect overflow before
-// truncating to 16 bits. Saturate instead of wrapping so strong signals clip
-// rather than invert.
 logic signed [24:0] demod_pre;
 assign demod_pre = demod_raw[32:8];
 
-// De-emphasis: coefficient 7/128, tau=71 us at 250 kHz IQ rate.
-// 75 us is the North American FM standard; 71 us is the closest achievable with
-// a power-of-2 denominator. de_err is 19 bits so that 7*de_err (max ~458k) does
-// not overflow before the >>7.
+
 logic signed [15:0] de_state;
 logic signed [18:0] de_err;
 assign de_err = {{3{demod_scaled[15]}}, demod_scaled} - {{3{de_state[15]}}, de_state};
@@ -55,16 +45,15 @@ always_ff @(posedge clk or posedge rst) begin
             cross2 <= i_in * q_prev;
             demod_raw <= cross1 - cross2;
 
-            if      (demod_pre > 25'sd32767)  demod_scaled <= 16'sd32767;
+            if (demod_pre > 25'sd32767) demod_scaled <= 16'sd32767;
             else if (demod_pre < -25'sd32768) demod_scaled <= -16'sd32768;
-            else                              demod_scaled <= demod_pre[15:0];
+            else demod_scaled <= demod_pre[15:0];
 
             de_state <= de_state + ((de_err + (de_err <<< 1) + (de_err <<< 2)) >>> 7);
 
             audio_out <= de_state;
             audio_valid <= 1'b1;
 
-            // MPX tap: the discriminator output before de-emphasis.
             mpx_out <= demod_scaled;
             mpx_valid <= 1'b1;
 

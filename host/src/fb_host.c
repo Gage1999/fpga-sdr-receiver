@@ -14,14 +14,14 @@ void fb_host_init(struct fb *fb, uint16_t fill) {
 }
 
 // Routes:
-//   Reads (scan-out)    → FRONT buffer
-//   Writes (compositor) → BACK buffer
+//   Reads (scan-out)    -> FRONT buffer
+//   Writes (compositor) -> BACK buffer
 // Then fb_swap flips front/back at "V-sync."
 //
-// The FPGA also uses double buffering (arch doc §6 has FB_FRONT/FB_BACK)
-// — same visible semantics. The host doesn't model the SDRAM controller's
+// The FPGA also uses double buffering (arch doc Section 6 has FB_FRONT/FB_BACK)
+// - same visible semantics. The host doesn't model the SDRAM controller's
 // request/grant or line-cache fill latency; the harness intentionally
-// skips those (handoff §13). Golden tests verify visible behavior only.
+// skips those (handoff Section 13). Golden tests verify visible behavior only.
 
 static uint16_t (*front_plane(const struct fb *fb))[SCREEN_W] {
     return fb->front == 0 ? (uint16_t(*)[SCREEN_W])fb->a : (uint16_t(*)[SCREEN_W])fb->b;
@@ -59,7 +59,7 @@ void fb_swap(fb_t *fb) {
     // The plane we just composited and scanned out (the current back) becomes
     // the new front. Copy it into the new back so the *next* frame's
     // incremental compositing (waterfall / GOES scroll, which read-modify-write
-    // their own prior rows) builds on the image that was actually just shown —
+    // their own prior rows) builds on the image that was actually just shown -
     // not this plane's stale two-frames-ago state. Without this copy the two
     // planes accumulate independent every-other-frame histories and the
     // waterfall flickers between them at the refresh rate.

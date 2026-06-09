@@ -26,7 +26,7 @@ style used by the simulator. This does not semantically remove map labels or
 roads; use --tile-url with a sparse/dark tile provider for that.
 
 Map data: defaults to the OpenStreetMap standard tile server. OSM tiles are
-© OpenStreetMap contributors (ODbL). Follow the tile usage policy
+(c) OpenStreetMap contributors (ODbL). Follow the tile usage policy
 (https://operations.osmfoundation.org/policies/tiles/): real User-Agent, no bulk
 downloading. Point --tile-url at a provider whose terms permit embedding before
 shipping a build.
@@ -120,7 +120,7 @@ def build_map(args) -> "tuple":
             try:
                 tile = fetch_tile(args.tile_url, z, tx, ty, args.user_agent, cache)
                 stitched.paste(tile, ((tx - tx0) * TILE_SIZE, (ty - ty0) * TILE_SIZE))
-            except Exception as e:  # noqa: BLE001 — leave a gray hole, keep going
+            except Exception as e:  # noqa: BLE001 - leave a gray hole, keep going
                 print(f"  tile {z}/{tx}/{ty} failed: {e}", file=sys.stderr)
 
     crop = stitched.crop((int(round(left - tx0 * TILE_SIZE)),
@@ -207,7 +207,7 @@ def main() -> int:
     img = apply_display_style(img, args.dark)
     meta["style"] = "dark" if args.dark else "source"
     emit(img, meta, args.out_dir, args.name)
-    print("map data © OpenStreetMap contributors (ODbL) unless --tile-url overridden",
+    print("map data (c) OpenStreetMap contributors (ODbL) unless --tile-url overridden",
           file=sys.stderr)
     return 0
 

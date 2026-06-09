@@ -1,15 +1,6 @@
 `timescale 1ns/1ps
 
-// tb_rds_demod — synthesize an FM composite (MPX) signal carrying RDS and verify
-// the demodulator recovers the transmitted bit stream.
-//
-// MPX = 19 kHz pilot + 57 kHz suppressed-carrier DSB biphase subcarrier (coherent
-// 3rd harmonic of the pilot) modulated by a known, differentially-encoded random
-// bit pattern at 1187.5 bps. Sample rate 260.417 kHz (one sample per clock).
-//
-// The demod has an unknown lock/pipeline latency, so the test records the
-// recovered bits and finds the bit alignment that minimizes mismatches against
-// the transmitted pattern; it passes if a long run matches at the best offset.
+// tb_rds_demod - synthesize an FM composite (MPX) signal carrying RDS and verify
 
 module tb_rds_demod;
 

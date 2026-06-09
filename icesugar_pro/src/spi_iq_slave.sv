@@ -32,4 +32,3 @@ always_ff @(posedge spi_clk or posedge spi_cs_n) begin
 end
 
 endmodule
-

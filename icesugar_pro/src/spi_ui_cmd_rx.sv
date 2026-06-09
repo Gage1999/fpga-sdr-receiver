@@ -1,18 +1,14 @@
 module spi_ui_cmd_rx (
-    input  logic        spi_clk,
-    input  logic        spi_cs_n,
-    input  logic        spi_mosi,
+    input logic spi_clk,
+    input logic spi_cs_n,
+    input logic spi_mosi,
 
-    input  logic        clk,
-    input  logic        rst,
+    input logic clk,
+    input logic rst,
 
-    output logic        cmd_valid,
-    output logic [7:0]  cmd,
-    output logic [31:0] arg,
-
-    output logic [15:0] good_frames,
-    output logic [15:0] bad_frames,
-    output logic [15:0] dropped_events
+    output logic cmd_valid,
+    output logic [7:0] cmd,
+    output logic [31:0] arg
 );
 
 localparam logic [7:0] WIRE_MAGIC = 8'hA5;
@@ -218,7 +214,6 @@ task automatic accept_frame;
         volume_spi <= cand_volume_spi;
         flags_spi <= cand_flags_spi;
         freq_hz_spi <= cand_freq_hz_spi;
-        good_frames <= good_frames + 16'd1;
 
         if (mask != 3'b000) begin
             if (event_toggle_spi == event_ack_sync_spi) begin
@@ -228,8 +223,6 @@ task automatic accept_frame;
                 event_freq_hz_spi <= cand_freq_hz_spi;
                 event_mask_spi <= mask;
                 event_toggle_spi <= ~event_toggle_spi;
-            end else begin
-                dropped_events <= dropped_events + 16'd1;
             end
         end
     end
@@ -245,8 +238,6 @@ task automatic finish_frame(input logic [7:0] crc1);
 
         if (crc_ok && len_ok && !payload_bad_spi) begin
             accept_frame();
-        end else begin
-            bad_frames <= bad_frames + 16'd1;
         end
         parser_state <= P_IDLE;
     end
@@ -417,9 +408,6 @@ initial begin
     event_toggle_spi = 1'b0;
     event_ack_meta_spi = 1'b0;
     event_ack_sync_spi = 1'b0;
-    good_frames = '0;
-    bad_frames = '0;
-    dropped_events = '0;
 end
 
 endmodule

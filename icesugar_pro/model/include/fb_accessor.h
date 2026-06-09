@@ -6,13 +6,6 @@
 #include "regions.h"
 
 // Opaque framebuffer handle.
-//
-// On host: a wrapper around two uint16_t[480][800] buffers.
-// On hardware: a wrapper around the SDRAM controller's request/grant
-// interface plus a row-pointer for the waterfall ring (arch doc §7a).
-//
-// fb_compositor.c and pixel_shader.c go through this interface and
-// nothing else in shared/ may touch FB memory.
 typedef struct fb fb_t;
 
 uint16_t fb_read(const fb_t *fb, uint16_t x, uint16_t y);

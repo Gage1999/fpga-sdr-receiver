@@ -9,7 +9,7 @@
 
 // Bundle of ROM-resident tables the pixel shader reads from.
 // On host: pointers into static const arrays in shared/src/*.c.
-// On hardware: pointers stand in for EBR ROM ports — the SV port the
+// On hardware: pointers stand in for EBR ROM ports - the SV port the
 // equivalent indices straight into block-RAM read addresses.
 typedef struct {
     const uint8_t  *font_8x16;     // FONT_8X16_COUNT * FONT_8X16_H bytes

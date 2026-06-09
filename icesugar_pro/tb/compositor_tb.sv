@@ -1,12 +1,6 @@
 // Closed-loop testbench for compositor.sv + sdram_ctrl.sv
-//
+
 // Feeds two rows of magnitudes; the compositor maps them to RGB565 and writes
-// them into the framebuffer (line 0 then line 1) through sdram_ctrl. The
-// behavioral SDRAM model captures the writes; we then read its memory back and
-// confirm each pixel landed at the correct HALF-PAGE framebuffer address (256
-// words/row, cols 0..255 only — the same mapping scan_out reads) with the right
-// palette value. With half-page, an 800-word line spans 4 SDRAM rows; line 1
-// starts mid-row (word 800 -> row 3, col 32), exercising a partial first segment.
 
 `timescale 1ns/1ps
 
@@ -57,7 +51,7 @@ module compositor_tb;
         .sdram_dm(sdram_dm)
     );
 
-    // ---- Behavioral SDRAM write model (bank 0) ----
+    // Behavioral SDRAM write model (bank 0).
     logic [15:0] sdram_mem [0:4*8192*512-1];
     logic [12:0] active_row [0:3];
     logic [1:0]  wr_ba;
@@ -92,7 +86,7 @@ module compositor_tb;
     end
     assign sdram_dq_in = 16'h0000;
 
-    // ---- Reference ----
+    // Reference.
     function automatic logic [7:0]  mag_of (input int row, input int c); mag_of  = 8'((c*3 + row*7) & 8'hFF); endfunction
     function automatic logic [15:0] pal_of (input logic [7:0] m); pal_of = {m[7:3], m[7:2], m[7:3]}; endfunction
 

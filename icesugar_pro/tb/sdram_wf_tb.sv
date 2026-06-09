@@ -1,11 +1,7 @@
 // Integration sim for top_sdram_wf (Phase 4+5): generator -> async_fifo -> compositor
 // -> arbiter -> controller -> SDRAM model -> scan_out -> line_cache -> LCD.
-//
+
 // A behavioral SDRAM model captures the compositor's writes and serves scan_out's
-// reads. We don't check exact displayed pixels (scroll + CDC make that fiddly); we
-// prove the chain is LIVE and not deadlocked: the compositor writes real palette
-// data into the framebuffer, scan_out reads lines back into the cache, and the LCD
-// emits non-zero, varying RGB. Hardware confirms the moving picture.
 
 `timescale 1ns/1ps
 
@@ -30,7 +26,7 @@ module sdram_wf_tb;
         .sdram_ba(sdram_ba), .sdram_a(sdram_a), .sdram_dm(sdram_dm), .sdram_dq(sdram_dq)
     );
 
-    // ---- Behavioral SDRAM model (bank 0). clk_sdram == CLK in sim. ----
+    // Behavioral SDRAM model (bank 0). clk_sdram == CLK in sim.
     logic [15:0] sdram_mem [0:4*8192*512-1];
     logic [12:0] active_row [0:3];
     logic [1:0]  wr_ba; logic [9:0] wr_col; int wr_burst; logic wr_active;
@@ -77,9 +73,9 @@ module sdram_wf_tb;
     wire [22:0] rd_addr_w = flat_addr(rdp_ba[2], rdp_row[2], rdp_col[2] + rdp_cnt[2]);
     assign sdram_dq = rdp_v[2] ? sdram_mem[rd_addr_w] : 16'hzzzz;
 
-    // ---- liveness monitors ----
+    // liveness monitors.
     // Per-frame line-fill tracking: with the throttled (realistic) generator the compositor
-    // barely touches the bus, so scan_out must keep up — every active display line should be
+    // barely touches the bus, so scan_out must keep up - every active display line should be
     // freshly fetched. We count distinct lines scan_out delivered (w_en) vs lines displayed.
     int    cache_writes = 0, comp_writes = 0, lcd_active = 0, lcd_xpix = 0;
     logic [15:0] lcd_min = 16'hFFFF, lcd_max = 16'h0000;
@@ -107,11 +103,6 @@ module sdram_wf_tb;
     initial begin
         #16000000;  // 16 ms: startup clear (~4 ms) + operation
         // Checks: the FB clear completed; scan_out keeps up (no starvation, cache_writes ~
-        // lcd_active); no undefined pixels; the compositor wrote real beats; and its gradient
-        // actually landed in SDRAM at the right addresses (bright right end > dark left end).
-        // We verify the framebuffer CONTENT rather than the live LCD, because the throttled
-        // compositor writes slower than the display scans, so in sim the displayed lines read
-        // rows not yet written (a rate/coverage artifact, not a design issue).
         fb_grad = (fb_at(5*800+799) > fb_at(5*800+8)) && (fb_at(5*800+799) != 0);
         $display("clr_done=%0b cache_writes=%0d lcd_active=%0d comp_writes=%0d xpix=%0d  FBrow5[x8=%04h x799=%04h]",
                  dut.clr_done, cache_writes, lcd_active, comp_writes, lcd_xpix, fb_at(5*800+8), fb_at(5*800+799));
@@ -122,9 +113,6 @@ module sdram_wf_tb;
                      dut.clr_done, cache_writes, lcd_active, comp_writes, lcd_xpix, fb_grad);
         $finish;
     end
-
-
-
 
     initial begin #24000000; $display("TIMEOUT"); $finish; end
 

@@ -57,13 +57,13 @@ void fpga_sim_init(fpga_sim_t *s) {
 void fpga_sim_tick(fpga_sim_t *s, uint16_t *pixels_out) {
     wire_drain(s);
 
-    // Drop any touch events the FPGA observed — they were echoed only for
+    // Drop any touch events the FPGA observed - they were echoed only for
     // hardware-link parity. They don't drive anything inside the FPGA in the
     // current design.
     touch_event_t t;
     while (touch_queue_pop(&g_fpga_touchq, &t)) { (void)t; }
 
-    // V-sync: flip the UI state shadow buffer (arch doc §8).
+    // V-sync: flip the UI state shadow buffer (arch doc Section 8).
     s->shadow_front = s->shadow;
 
     // Mode change: the FB-backed regions (waterfall/GOES/ADS-B) read straight

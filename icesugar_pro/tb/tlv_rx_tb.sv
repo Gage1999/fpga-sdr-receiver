@@ -1,8 +1,4 @@
 // Testbench for the full TLV receive chain:
-//   spi_frame_rx -> async_fifo (byte CDC) -> tlv_demux -> tlv_iq_sink
-// Mirrors the USE_TLV=1 wiring in top.sv. Sends one TLV_IQ packet of N samples
-// over SPI and checks that the reconstructed {I,Q} words (including a negative
-// value, to exercise sign) match what was transmitted, in order.
 
 `timescale 1ns/1ps
 
@@ -14,7 +10,7 @@ module tlv_rx_tb;
 
     always #4 CLK = ~CLK;
 
-    // ---- DUT chain (same as top.sv g_tlv) ----
+    // DUT chain (same as top.sv g_tlv).
     logic       fr_valid, fr_sof;
     logic [7:0] fr_byte;
 
@@ -61,7 +57,7 @@ module tlv_rx_tb;
         .i_data(oi), .q_data(oq), .iq_word_valid(ov)
     );
 
-    // ---- Capture reconstructed samples ----
+    // Capture reconstructed samples.
     localparam int N = 5;
     logic signed [15:0] exp_i [0:N-1];
     logic signed [15:0] exp_q [0:N-1];

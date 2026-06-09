@@ -1,30 +1,11 @@
-// pixel_shader_top — the self-contained, synthesizable live-overlay shader.
-//
-// Wraps the parity-verified combinational core (pixel_shader.sv) together with
-// its three EBR/logic memories so the rest of the gateware sees one block with
-// no loose ROM ports:
-//   - font_16x32_rom   (label/title glyphs)
-//   - sprite_rom       (status-bar button icons)
-//   - spectrum_bin_ram (256 magnitude bins; written by the Pico/ingest path)
-//
-// The "prepared" shader-state inputs (freq_text, band_text, label origins,
-// volume_fill_px, …) are produced by the C pixel_shader_prepare() model in host
-// tests and by ui_status_prepare.sv in the active FPGA top. They stay as ports
-// here: this module is exactly the per-pixel path of the C reference, now backed
-// by real memories instead of harness arrays.
-//
-// At integration (#18) this replaces u_lcd's pixel logic: scan_timing drives
-// (x,y), the line cache drives fb_under, and `pixel` goes to the LCD pins.
 module pixel_shader_top #(
     parameter FONT16_MEM = "build/font_16x32.mem",
     parameter SPRITE_MEM = "build/sprite_rom.mem"
 ) (
-    // Pixel position + framebuffer pixel under the overlay.
     input  logic [9:0]   x,
     input  logic [9:0]   y,
     input  logic [15:0]  fb_under,
 
-    // Prepared UI state (front buffer of the UI state shadow, #12).
     input  logic [1:0]   layout,
     input  logic [1:0]   demod,
     input  logic [7:0]   flags,
@@ -47,7 +28,6 @@ module pixel_shader_top #(
     input  logic [7:0]   spectrum_start_bin,
     input  logic [8:0]   spectrum_visible_bins,
 
-    // Spectrum bin write port (Pico SPI / ingest writer domain).
     input  logic         spec_wr_clk,
     input  logic         spec_wr_en,
     input  logic [7:0]   spec_wr_addr,
@@ -55,7 +35,6 @@ module pixel_shader_top #(
 
     output logic [15:0]  pixel
 );
-    // ── shader <-> memory nets ───────────────────────────────────────────
     logic [7:0]  spectrum_bin_addr;
     logic [15:0] spectrum_bin_data;
     logic [11:0] font16_addr;
@@ -63,7 +42,6 @@ module pixel_shader_top #(
     logic [13:0] sprite_addr;
     logic [15:0] sprite_data;
 
-    // ── memories ─────────────────────────────────────────────────────────
     spectrum_bin_ram u_spectrum (
         .wr_clk  (spec_wr_clk),
         .wr_en   (spec_wr_en),
@@ -83,7 +61,7 @@ module pixel_shader_top #(
         .data (sprite_data)
     );
 
-    // ── shader core ──────────────────────────────────────────────────────
+    // Shader core
     pixel_shader u_shader (
         .x                 (x),
         .y                 (y),

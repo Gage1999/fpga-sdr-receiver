@@ -4,7 +4,7 @@ Convert the C arrays in icesugar_pro/model/src/{font,sprites,palette}.c to .mem 
 that the ECP5 toolchain consumes via $readmemh.
 
 This is meant to be called from a future gateware/ build step. The host
-build does not depend on it. The C source is the source of truth — if you
+build does not depend on it. The C source is the source of truth - if you
 change a sprite or glyph, re-run gen_roms.py first, then this.
 
 Usage:

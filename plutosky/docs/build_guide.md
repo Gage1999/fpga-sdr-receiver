@@ -1,39 +1,38 @@
-# Build Guide
+# PlutoSky Build Guide
 
-How to rebuild the PlutoSky bitstream/BOOT.BIN, build the iCeSugar Pro FPGA
-design, and run the current board-level tests.
+This guide covers the PlutoSky side of the project: rebuilding the Zynq
+bitstream/BOOT.BIN, building the ARM userspace programs, and running the final
+demo flow with the iCeSugar Pro.
 
-All commands are written for Windows Terminal with PowerShell.
+Commands assume Windows Terminal with PowerShell unless noted otherwise.
 
----
+## Repository Layout
 
-## 1. Project Pieces
+| Path | Role |
+|---|---|
+| `plutosky/src/fishball7020_rf/` | Vivado project scripts and top-level Zynq design |
+| `plutosky/src/boot_parts/` | FSBL, U-Boot, BIF file, and BOOT.BIN inputs |
+| `plutosky/src/main.c` | Final combined FM/GOES/ADS-B runtime (`sdr_main`) |
+| `plutosky/src/icesugar_stream.c` | Standalone IQ streamer diagnostic |
+| `plutosky/tests/test_spi_reg.c` | AXI SPI register sanity test |
 
-This project currently uses two FPGA builds:
+The final presentation path is:
 
-| Directory | Target | Purpose |
-|-----------|--------|---------|
-| `plutosky/` | Zynq BOOT.BIN | AD9363 RF capture plus AXI SPI on JP5 |
-| `icesugar_pro/` | ECP5 bitstream | LCD waterfall, FM demod, I2S audio, Pico command SPI |
+```text
+PlutoSky AD9363 -> sdr_main -> JP5 SPI TLV stream -> iCeSugar Pro
+```
 
-The PlutoSky sends IQ samples to the iCeSugar Pro over JP5 SPI. The iCeSugar
-then renders the waterfall and drives the I2S DAC.
-
----
-
-## 2. Tools
-
-Required:
+## Requirements
 
 | Tool | Purpose |
-|------|---------|
-| Vivado 2022.1 | PlutoSky synthesis, implementation, bootgen |
-| Vitis 2022.1 ARM compiler | Build PlutoSky userspace test apps |
-| OSS CAD Suite | Build and program the iCeSugar Pro bitstream |
-| Python 3.10+ | Maia SDR IP generation and helper scripts |
-| Git for Windows | Git Bash for ADI HDL IP packaging script |
+|---|---|
+| Vivado 2022.1 | Zynq synthesis, implementation, and bootgen |
+| Vitis 2022.1 ARM GCC | Builds PlutoSky userspace binaries |
+| Git for Windows | Runs ADI HDL helper scripts with Bash |
+| Python 3.10+ | Builds Maia SDR helper IP when needed |
+| OSS CAD Suite | Builds/programs the iCeSugar Pro bitstream |
 
-Set these paths for your machine:
+Set the paths for your machine:
 
 ```powershell
 $env:VIVADO = "C:\Xilinx\Vivado\2022.1"
@@ -42,23 +41,21 @@ $env:ADI_IGNORE_VERSION_CHECK = "1"
 $env:ADI_NO_BITSTREAM_COMPRESSION = "1"
 ```
 
-Load OSS CAD Suite before building iCeSugar:
-
-```powershell
-. "$env:OSS_CAD\environment.ps1"
-```
-
-The PlutoSky Makefile currently expects the Vitis ARM compiler here:
+The PlutoSky Makefile defaults to this Vitis compiler:
 
 ```text
 C:/Xilinx/Vitis/2022.1/gnu/aarch32/nt/gcc-arm-linux-gnueabi/bin/arm-linux-gnueabihf-gcc
 ```
 
-If your Vitis install is elsewhere, update `plutosky/Makefile`.
+Override it if your install is elsewhere:
 
----
+```powershell
+make CROSS=C:/path/to/arm-linux-gnueabihf-gcc sdr-build
+```
 
-## 3. Clone And Initialize Submodules
+## First-Time Setup
+
+Initialize submodules:
 
 ```powershell
 git submodule update --init
@@ -67,31 +64,13 @@ git submodule update --init maia-hdl/adi-hdl
 cd ..\..\..
 ```
 
-Only `maia-hdl/adi-hdl` is needed for the current build.
-
----
-
-## 4. Build ADI HDL Library IPs
-
-Run this once after cloning, or after updating `adi-hdl`.
+Package the ADI HDL library IPs:
 
 ```powershell
 & "C:\Program Files\Git\bin\bash.exe" plutosky\src\fishball7020_rf\build_libs.sh
 ```
 
-This packages the ADI HDL library IPs needed by the Vivado project.
-
----
-
-## 5. Build The Maia SDR IP
-
-Skip this step if this file already exists:
-
-```text
-plutosky\src\maia-sdr\maia-hdl\ip\maia-sdr\maia_iio\component.xml
-```
-
-Build it with:
+If the Maia SDR IP is missing, build and package it:
 
 ```powershell
 cd plutosky\src\maia-sdr\maia-hdl
@@ -112,11 +91,15 @@ $env:MAIA_SDR_CONFIG = "maia_iio"
 cd ..\..\..\..
 ```
 
----
+The expected packaged IP is:
 
-## 6. Build The PlutoSky Bitstream
+```text
+plutosky\src\maia-sdr\maia-hdl\ip\maia-sdr\maia_iio\component.xml
+```
 
-From the repo root:
+## Rebuild The PlutoSky FPGA Image
+
+Build the Zynq bitstream:
 
 ```powershell
 & "$env:VIVADO\bin\vivado" -mode batch -source plutosky\src\fishball7020_rf\rebuild.tcl
@@ -128,27 +111,7 @@ Output:
 plutosky\src\fishball7020_rf\fishball7020_rf.runs\impl_1\system_top.bit
 ```
 
-Expect the build to take roughly 15-25 minutes.
-
-The current PlutoSky bitstream includes an AXI Quad SPI controller at:
-
-```text
-0x7C440000
-```
-
-It drives JP5 SPI at about 12.5 MHz with the current `C_SCK_RATIO=8` setting.
-
----
-
-## 7. Build PlutoSky BOOT.BIN
-
-BOOT.BIN contains:
-
-1. FSBL
-2. PlutoSky FPGA bitstream
-3. U-Boot
-
-Build it with:
+Build BOOT.BIN:
 
 ```powershell
 cd plutosky\src\boot_parts
@@ -156,7 +119,7 @@ cd plutosky\src\boot_parts
 cd ..\..\..
 ```
 
-Verify the image:
+Verify the image contents:
 
 ```powershell
 & "$env:VIVADO\bin\bootgen" -arch zynq -read plutosky\src\boot_parts\BOOT.bin
@@ -170,22 +133,20 @@ system_top.bit
 u-boot.bin
 ```
 
-Vivado may print an overlap warning for `fsbl.elf` and `system_top.bit`. That is
-a known Vivado 2022.1 warning for this image layout.
+Vivado 2022.1 may warn about FSBL/bitstream overlap in this image layout. The
+warning is expected for this board package.
 
----
+## Deploy BOOT.BIN
 
-## 8. Deploy PlutoSky BOOT.BIN
+The board appears over USB Ethernet at `192.168.2.1`.
 
-The board defaults to USB Ethernet at `192.168.2.1`.
-
-Copy the new BOOT.BIN:
+Copy the image:
 
 ```powershell
 scp -O plutosky\src\boot_parts\BOOT.bin root@192.168.2.1:/boot/BOOT.bin.new
 ```
 
-Check the hash:
+Check the transfer:
 
 ```powershell
 $local = (Get-FileHash -Algorithm MD5 "plutosky\src\boot_parts\BOOT.bin").Hash.ToLower()
@@ -194,107 +155,17 @@ Write-Host "Local : $local"
 Write-Host "Remote: $remote"
 ```
 
-Swap it in:
+Install it and power-cycle the board:
 
 ```powershell
 ssh root@192.168.2.1 "cp /boot/BOOT.bin /boot/BOOT.bin.bak && mv /boot/BOOT.bin.new /boot/BOOT.bin && sync"
 ```
 
-Power-cycle the PlutoSky after replacing BOOT.BIN.
-
----
-
-## 9. Build And Program iCeSugar Pro
-
-Load OSS CAD Suite first:
-
-```powershell
-. "$env:OSS_CAD\environment.ps1"
-```
-
-Build the normal iCeSugar bitstream:
-
-```powershell
-cd icesugar_pro
-make all
-```
-
-Program the normal build:
-
-```powershell
-make prog
-```
-
-Current useful iCeSugar targets:
-
-| Target | Purpose |
-|--------|---------|
-| `make prog` | Normal full build |
-| `make prog_lcd_test` | LCD color-bar wiring test |
-| `make prog_spi_rx_test` | PlutoSky-to-iCeSugar SPI receive display test |
-| `make prog_fm_audio_test` | Hardware-proven minimal FM audio path |
-| `make prog_fm_audio_tone_test` | I2S/DAC diagnostic tone using the FM audio clocking |
-| `make prog_fm_audio_iq_test` | FPGA-generated FM IQ through the demod/audio path |
-| `make prog_sdram_test` | Basic SDRAM controller write/read diagnostic |
-| `make prog_tlv_link_test` | TLV receive/link diagnostic |
-
-For isolated FM audio debugging, use:
-
-```powershell
-make prog_fm_audio_test
-```
-
----
-
-## 10. iCeSugar Simulation Checks
-
-From `icesugar_pro/`:
-
-```powershell
-make sim_fm
-make sim_lcd
-make sim_fft
-make sim_integration
-```
-
-The LCD simulation may print Icarus warnings about constant selects in
-`always_*` blocks. Those warnings are expected with this toolchain and are not
-simulation failures.
-
----
-
-## 11. Build PlutoSky Userspace Tools
-
-From `plutosky/`:
-
-```powershell
-make spi-reg-build
-make test-build
-make stream-build
-```
-
-Useful targets:
-
-| Target | Purpose |
-|--------|---------|
-| `make spi-reg-run` | Verify AXI SPI register access at `0x7C440000` |
-| `make test-run TEST=longtone` | Simple known-good waterfall/SPI sanity test |
-| `make stream-run STREAM_ARGS="..."` | Run the IQ streamer |
-
-The Makefile copies the built program to the PlutoSky with `scp -O` and runs it
-over SSH.
-
----
-
-## 12. Verify PlutoSky Hardware
-
-After power-cycling with the new BOOT.BIN:
+After reboot, verify the board:
 
 ```powershell
 ssh root@192.168.2.1
 ```
-
-On the board:
 
 ```bash
 cat /sys/class/fpga_manager/fpga0/state
@@ -306,117 +177,85 @@ Expected:
 - FPGA manager state is `operating`
 - AD936x IIO devices are present
 
-Then verify the AXI SPI block:
+## Build PlutoSky Userspace
+
+From `plutosky/`:
 
 ```powershell
-cd plutosky
-make spi-reg-run
+make sdr-build
 ```
 
-This should pass all register checks.
+Useful targets:
 
----
+| Target | Purpose |
+|---|---|
+| `make sdr-build` | Build the final combined runtime |
+| `make sdr-run SDR_MODE=fm SDR_FREQ=95.1` | Deploy and run the final runtime |
+| `make radio-run FREQ_MHZ=95.1` | Convenience FM run target for the final runtime |
+| `make spi-reg-run` | Verify AXI SPI register access at `0x7C440000` |
+| `make stream-run STREAM_ARGS="..."` | Run the standalone IQ streamer diagnostic |
+| `make synth-fm-run` | Run synthetic FM through the standalone IQ streamer |
 
-## 13. Board-Level SPI And Waterfall Tests
+`radio-run` and `sdr-run` both launch `/root/sdr_main` on the board.
 
-First program the iCeSugar with the normal integrated bitstream:
+## Final Demo Run
+
+Build and program the iCeSugar Pro from `icesugar_pro/`:
 
 ```powershell
-cd icesugar_pro
+. "$env:OSS_CAD\environment.ps1"
 make prog
 ```
 
-Then run the simple PlutoSky IQ test:
+Run the PlutoSky FM path from `plutosky/`:
 
 ```powershell
-cd ..\plutosky
-make test-run TEST=longtone
-```
-
-Expected LCD result:
-
-```text
-Visible waterfall/spectrum activity from the known IQ pattern.
-```
-
-If this fails, check the physical SPI wiring before debugging the SDR pipeline.
-For a display-only receive diagnostic, `make prog_spi_rx_test` is also useful.
-
-Current iCeSugar CS0 landing pins:
-
-| PlutoSky JP5 signal | iCeSugar signal | iCeSugar site |
-|---------------------|-----------------|---------------|
-| SCK | `spi_clk` | G2 |
-| MOSI | `mosi` | K1 |
-| CS | `cs` | R3 |
-
----
-
-## 14. Current Synthetic FM Test
-
-The main integrated build uses TLV-framed IQ, the SDRAM-backed display path,
-FFT, waterfall, FM demodulator, and I2S audio:
-
-```powershell
-cd icesugar_pro
-make prog
-
-cd ..\plutosky
-make synth-fm-run
-```
-
-This should produce a clean tone and a centered waterfall/spectrum response.
-The current compositor palette is grayscale; color waterfall lookup is still a
-separate integration item.
-
-`make synth-fm-run` sends TLV_IQ packets.
-
-If synthetic FM does not produce clean audio, compare against
-`prog_fm_audio_iq_test` to separate Pluto/SPI delivery from FPGA demod/audio.
-
-For display-only SPI sanity, this conservative command is also useful:
-
-```powershell
-make stream-run STREAM_ARGS="--mode synth-tone --rate 264000 --duration 20 --per-word-cs --synth-amp 32000 --word-delay-us 10"
-```
-
-Per-word CS is reliable for wiring/debug, but it is too slow for clean FM audio.
-
----
-
-## 15. Live FM Test Starting Point
-
-Live FM uses the normal integrated TLV build:
-
-```powershell
-cd icesugar_pro
-make prog
-```
-
-Then try PlutoSky live FM mode:
-
-```powershell
-cd ..\plutosky
 make radio-run FREQ_MHZ=95.1
 ```
 
-Notes:
+Use a strong local FM station for `FREQ_MHZ`.
 
-- Change `--freq-mhz` to a strong local FM station.
-- `radio-run` sends TLV_IQ packets and must be paired with `make prog`.
-- Use `make stream-run STREAM_ARGS="..."` only when you need to override IQ
-  shift, DC removal, bandwidth, or duration manually.
+Expected result:
 
----
+- The iCeSugar display shows live spectrum/waterfall activity.
+- FM audio is produced by the iCeSugar I2S path.
+- Pico UI mode/frequency commands are relayed back to `sdr_main` through JP5
+  MISO.
 
-## 16. Known Current Limitations
+## Diagnostics
 
-- JP5 SPI is currently about 12.5 MHz.
-- Jumper-wire signal integrity matters. Keep SCK, MOSI, CS, and GND short.
-- Per-word CS is too slow for audio-rate FM.
-- The FM audio path relies on a large FPGA IQ FIFO/preroll to absorb
-  Pluto/Linux userspace timing jitter.
-- The integrated display path now uses SDRAM for the waterfall/framebuffer
-  stack. The current waterfall palette is grayscale until the color LUT is
-  wired into the compositor.
+Verify the AXI SPI block:
 
+```powershell
+make spi-reg-run
+```
+
+Run a synthetic FM source through the same Pluto-to-iCeSugar SPI link:
+
+```powershell
+make synth-fm-run
+```
+
+Run the standalone TLV test stream:
+
+```powershell
+make stream-run STREAM_ARGS="--mode tlv-test --rate 260417 --chunk-samples 256 --duration 20"
+```
+
+Useful iCeSugar targets:
+
+| Target | Purpose |
+|---|---|
+| `make prog` | Final integrated display/audio build |
+| `make prog_lcd_test` | LCD wiring diagnostic |
+| `make prog_fm_audio_test` | Minimal hardware-proven FM audio path |
+| `make prog_fm_audio_iq_test` | FPGA-generated FM IQ through demod/audio |
+| `make prog_sdram_test` | SDRAM controller diagnostic |
+| `make prog_tlv_link_test` | TLV receive/link diagnostic |
+
+## Notes
+
+- JP5 SPI runs at about 12.5 MHz with the current `C_SCK_RATIO=8` setting.
+- Keep JP5 SCK, MOSI, MISO, CS, and GND wiring short.
+- The final PlutoSky runtime is `sdr_main`; `icesugar_stream` is retained only
+  as a diagnostic utility.

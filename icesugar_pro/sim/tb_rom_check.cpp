@@ -1,8 +1,4 @@
-// ROM equivalence harness: sweeps every address of font_16x32_rom and
-// sprite_rom (loaded from the build/*.mem files) and byte-compares against the
-// C source-of-truth arrays (font_16x32[], sprite_rom[]). A pass proves the
-// rom_to_mem.py -> $readmemh -> SV-ROM path is lossless, so the hardware ROMs
-// hold exactly what the C reference shader reads.
+// ROM equivalence harness for generated .mem files.
 
 #include <cstdio>
 #include <cstdint>

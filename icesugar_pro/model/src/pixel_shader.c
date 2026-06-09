@@ -19,15 +19,10 @@
 #define STATUS_DEMOD_X       332u
 #define STATUS_DEMOD_Y       3u
 #define STATUS_DEMOD_CHARS   2u
-
-// ──────────────────────────────────────────────────────────────────────────────
-// Button layout in the status bar — used by both shader and ui_logic for
+// Button layout in the status bar - used by both shader and ui_logic for
 // hit-testing. Kept here so the shader can render highlights without globals.
-//
 // Spectrum-page status bar is 800x64 starting at (0,0). Buttons use larger
 // 48x48 hit targets and scale the existing 32x32 sprites.
-// ──────────────────────────────────────────────────────────────────────────────
-
 static uint16_t brighten_rgb565(uint16_t px, uint8_t add) {
     uint8_t r = (uint8_t)RGB565_R(px);
     uint8_t g = (uint8_t)RGB565_G(px);
@@ -58,7 +53,7 @@ static uint8_t label_ink(const char *label, uint8_t label_chars,
 }
 
 // Find the centered text origin for a label inside a UI_STATUS_BTN_W square.
-// Runs in prepare(), not per-pixel — the inner loop is quadratic in glyph size.
+// Runs in prepare(), not per-pixel - the inner loop is quadratic in glyph size.
 static void label_origin(const char *label, uint8_t label_chars,
                          const aux_roms_t *roms,
                          int16_t *out_x, int16_t *out_y) {
@@ -169,11 +164,7 @@ static uint16_t draw_status_button(uint16_t lx, uint16_t ly,
     if (btn_id == st->active_button) return brighten_rgb565(px, 80u);
     return px;
 }
-
-// ──────────────────────────────────────────────────────────────────────────────
-// Text helpers — used by status bar.
-// ──────────────────────────────────────────────────────────────────────────────
-
+// Text helpers - used by status bar.
 // Returns pixel at (gx, gy) inside a 16x32 font glyph for char c, in `color` or `bg`.
 static uint16_t glyph_pixel_16x32(char c, uint8_t gx, uint8_t gy,
                                   uint16_t color, uint16_t bg,
@@ -346,14 +337,10 @@ static uint16_t shade_image_mode_button(uint16_t x, uint16_t y,
     if (!ui_button_hit(x, y, st->layout, &btn_id)) return under;
     return draw_status_button(x, y, btn_id, RGB565(12, 18, 24), st, roms);
 }
-
-// ──────────────────────────────────────────────────────────────────────────────
 // Spectrum: draw bars from spectrum_bins[256] across the region width.
 // Bin index = (lx * 256) / w. To stay FPGA-friendly, w is forced to a power
 // of two at compile time (SCREEN_W = 800 isn't, so we use a fast approximate
-// (lx * 256) >> 9 ≈ lx / 2; flagged as TODO for a reciprocal LUT in SV).
-// ──────────────────────────────────────────────────────────────────────────────
-
+// (lx * 256) >> 9 ~ lx / 2; flagged as TODO for a reciprocal LUT in SV).
 static uint16_t shade_spectrum(uint16_t lx, uint16_t ly, uint16_t w, uint16_t h,
                                const shader_state_t *st, const aux_roms_t *roms) {
     const uint16_t bg = RGB565(10, 14, 22);
@@ -393,12 +380,8 @@ static uint16_t shade_spectrum(uint16_t lx, uint16_t ly, uint16_t w, uint16_t h,
 
     return base;
 }
-
-// ──────────────────────────────────────────────────────────────────────────────
 // Overlay: touch crosshair + (future) modals. Always called before region
 // dispatch so it can supersede.
-// ──────────────────────────────────────────────────────────────────────────────
-
 static uint16_t shade_overlay(uint16_t x, uint16_t y,
                               const shader_state_t *st, const aux_roms_t *roms,
                               uint16_t under) {
@@ -417,12 +400,8 @@ static uint16_t shade_overlay(uint16_t x, uint16_t y,
     if (adx <= 1 && ady <= 1) return RGB565(255, 80, 80);
     return under;
 }
-
-// ──────────────────────────────────────────────────────────────────────────────
 // Per-frame precompute. Lifts state-derived work out of the per-pixel path
 // so the SV translation maps to a small combinational + ROM-lookup pipeline.
-// ──────────────────────────────────────────────────────────────────────────────
-
 static void copy_demod_label(uint8_t demod, char out[4]) {
     const char *src;
     switch (demod) {
@@ -481,11 +460,7 @@ void pixel_shader_prepare(const ui_state_t *ui, const aux_roms_t *roms,
 
     out->mute_sprite_id = (ui->flags & UI_FLAG_MUTE) ? SPR_BTN_MUTE_ON : SPR_BTN_MUTE;
 }
-
-// ──────────────────────────────────────────────────────────────────────────────
 // Top-level dispatch.
-// ──────────────────────────────────────────────────────────────────────────────
-
 uint16_t pixel_shader(uint16_t x, uint16_t y,
                       uint16_t fb_under,
                       const shader_state_t *st,

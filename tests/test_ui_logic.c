@@ -174,7 +174,7 @@ T_CASE(spi_emits_full_state_first) {
     T_EXPECT(g_mock_spi_len > 0);
     // First byte should be the magic.
     T_EXPECT_EQ(g_mock_spi_buf[0], 0xA5);
-    // Second byte is opcode — should be FULL_STATE on first tick.
+    // Second byte is opcode - should be FULL_STATE on first tick.
     T_EXPECT_EQ(g_mock_spi_buf[1], 0x01);
     return 0;
 }
@@ -287,7 +287,7 @@ T_CASE(sync_cadence_full_then_partials) {
         // Change state each tick so partials carry a non-empty diff.
         ui_logic_inject_touch(&L, btn_cx(UI_BTN_FREQ_UP), btn_cy(), TOUCH_TAP);
         g_mock_spi_len = 0;              // isolate this tick's emission
-        ui_logic_tick(&L);              // queue empty → only emit_state runs
+        ui_logic_tick(&L);              // queue empty -> only emit_state runs
 
         T_EXPECT(g_mock_spi_len >= 2);
         T_EXPECT_EQ(g_mock_spi_buf[0], 0xA5);

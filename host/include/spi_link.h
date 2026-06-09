@@ -4,8 +4,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
-// In-process Pico→FPGA SPI link. The harness uses one of these to ferry the
-// exact wire bytes between sim halves. No memcpy(struct) shortcuts — bytes
+// In-process Pico->FPGA SPI link. The harness uses one of these to ferry the
+// exact wire bytes between sim halves. No memcpy(struct) shortcuts - bytes
 // match what real SPI will see, which is the discipline that catches
 // endianness and packing bugs before hardware bring-up.
 

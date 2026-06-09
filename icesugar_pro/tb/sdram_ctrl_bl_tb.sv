@@ -1,10 +1,5 @@
 // Functional testbench for sdram_ctrl in BL=8 chunked mode (BURST_MODE=1).
-// Verifies the new S_READ_CMD/S_WRITE_CMD chunk-walking path reads/writes the
-// correct data, including single-row bursts that reach the page-boundary column
-// (col 511). This is a FUNCTIONAL check against an ideal model — it proves the
-// FSM addresses/streams correctly; the analog page-boundary margin is a hardware
-// property and is measured on-chip by top_sdram_cal, not here.
-//
+
 // DUT inputs are driven non-blocking to settle in the NBA region (keeps iverilog
 // and Verilator in agreement; see sdram_ctrl_tb.sv).
 
@@ -42,7 +37,7 @@ sdram_ctrl #(.RD_LAT(2), .BURST_MODE(1)) dut (
 );
 
 // ---- Behavioral SDRAM model (CL=2). Write captured on dq_oe; each WRITE/READ
-//      command resets its column pointer, so BL=8 chunks land correctly. ----
+// Command resets its column pointer, so BL=8 chunks land correctly. ----
 logic [15:0] sdram_mem [0:4*8192*512-1];
 logic [12:0] active_row [0:3];
 logic [1:0]  wr_ba; logic [9:0] wr_col; int wr_burst; logic wr_active;
@@ -85,7 +80,7 @@ end
 wire [22:0] rd_addr_w = flat_addr(rdp_ba[2], rdp_row[2], rdp_col[2] + rdp_cnt[2]);
 assign sdram_dq_in = rdp_v[2] ? sdram_mem[rd_addr_w] : 16'h0000;
 
-// ---- Stimulus ----
+// Stimulus.
 int errors = 0;
 int wi, ri;
 
@@ -148,11 +143,11 @@ initial begin
     do_write(25'(20 << 1), 10'd20);
     do_read_check(25'(20 << 1), 10'd20, "len20@col20");
 
-    // Scenario 2: full 512-word row (col 0..511) — reaches the page boundary.
+    // Scenario 2: full 512-word row (col 0..511) - reaches the page boundary.
     do_write(25'd0, 10'd512);
     do_read_check(25'd0, 10'd512, "len512@col0");
 
-    // Scenario 3: 256 words starting at col 256 (cols 256..511) — ends exactly at boundary.
+    // Scenario 3: 256 words starting at col 256 (cols 256..511) - ends exactly at boundary.
     do_write(25'(256 << 1), 10'd256);
     do_read_check(25'(256 << 1), 10'd256, "len256@col256");
 

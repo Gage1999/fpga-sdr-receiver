@@ -1,8 +1,8 @@
-# SSH Setup Guide: PlutoSky 7020
+# PlutoSky SSH Setup
 
-How to configure persistent SSH access on a fresh board. After following this
-guide, you will be able to SSH into the board over USB with public-key auth,
-and the board's host fingerprint will remain stable across cold boots.
+This guide configures persistent SSH access on a PlutoSky 7020 board. After
+setup, the board accepts public-key login over USB Ethernet and keeps a stable
+host fingerprint across cold boots.
 
 ---
 
@@ -15,7 +15,7 @@ and the board's host fingerprint will remain stable across cold boots.
 
 ---
 
-## 1. Generate an SSH key pair on your host
+## 1. Generate an SSH key pair
 
 Skip this step if you already have a key you want to use.
 
@@ -29,7 +29,7 @@ This creates:
 
 ---
 
-## 2. Add your SSH config entry
+## 2. Add an SSH config entry
 
 Add the following to `~/.ssh/config` (create the file if it doesn't exist):
 
@@ -42,7 +42,7 @@ Host pluto-usb
 
 ---
 
-## 3. Set up the jffs2 directory structure
+## 3. Create the persistent directory structure
 
 SSH into the board with the default password (analog):
 
@@ -64,7 +64,7 @@ exit
 
 ---
 
-## 4. Copy your public key to the board
+## 4. Install your public key
 
 From your host machine:
 
@@ -80,17 +80,18 @@ chmod 600 /mnt/jffs2/ssh/authorized_keys
 exit
 ```
 
-> **Handing off to another user?** See [Adding keys for additional users](#adding-keys-for-additional-users) before continuing, append their key now rather than overwriting later.
+If multiple people need access, append additional public keys rather than
+overwriting `authorized_keys`.
 
 ---
 
-## 5. Copy board scripts to the board
+## 5. Copy the board startup scripts
 
-From your host, copy both scripts from the repo's `board/` directory:
+From the repository root, copy both scripts from `plutosky/src/board/`:
 
 ```bash
-scp -O board/install_key.sh root@192.168.2.1:/mnt/jffs2/ssh/install_key.sh
-scp -O board/autorun.sh root@192.168.2.1:/mnt/jffs2/autorun.sh
+scp -O plutosky/src/board/install_key.sh root@192.168.2.1:/mnt/jffs2/ssh/install_key.sh
+scp -O plutosky/src/board/autorun.sh root@192.168.2.1:/mnt/jffs2/autorun.sh
 ```
 
 SSH in and make them executable:
@@ -129,7 +130,7 @@ If this connects without a password prompt, key-based auth is working.
 
 ---
 
-## 7. Cold-boot and verify host key stability
+## 7. Verify host key persistence
 
 Power-cycle the board fully (pull the USB cable, wait a few seconds, reconnect).
 After it comes back up, verify the host key matches what is stored in jffs2:
@@ -167,10 +168,8 @@ Verify both keys are present:
 ssh pluto-usb "cat /mnt/jffs2/ssh/authorized_keys"
 ```
 
-The new user only needs to:
-1. Have their key pair generated (step 1)
-2. Have their public key appended as above
-3. Add the SSH config entry (step 2) pointing to their private key
+The new user only needs to generate their own key pair, have their public key
+appended as above, and add the SSH config entry from step 2.
 
 ### Removing a user's access
 
@@ -213,6 +212,6 @@ ssh-keygen -R 192.168.2.1 -f "/c/Users/<you>/AppData/Roaming/SPB_Data/.ssh/known
 
 ### Connection refused / board not visible
 
-The USB gadget network interface (`usb0`, `192.168.2.1`) takes ~25–30 seconds
+The USB gadget network interface (`usb0`, `192.168.2.1`) takes ~25-30 seconds
 to come up after power-on. Wait for the interface to appear on your host before
 attempting to connect.

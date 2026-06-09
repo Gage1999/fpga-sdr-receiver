@@ -1,5 +1,5 @@
 // Closed-loop testbench for scan_out.sv + sdram_ctrl.sv + line_cache.sv
-//
+
 // A behavioral IS42S16160B read model is preloaded with a known framebuffer
 // pattern. scan_out is triggered to prefetch several display lines; each fetched
 // line is read back out of the line_cache and compared against the framebuffer.
@@ -76,9 +76,7 @@ module scan_out_tb;
         .rclk(clk), .r_slot(r_slot), .r_col(r_col), .r_data(r_data)
     );
 
-    // -----------------------------------------------------------------------
     // Behavioral SDRAM read model (CL=2, full-page streaming). Bank 0 only.
-    // -----------------------------------------------------------------------
     logic [15:0] sdram_mem [0:4*8192*512-1];
     logic [12:0] active_row [0:3];
 
@@ -131,9 +129,7 @@ module scan_out_tb;
     wire [22:0] rd_addr_w = flat_addr(rdp_ba[2], rdp_row[2], rdp_col[2] + rdp_cnt[2]);
     assign sdram_dq_in = rdp_v[2] ? sdram_mem[rd_addr_w] : 16'h0000;
 
-    // -----------------------------------------------------------------------
     // Stimulus
-    // -----------------------------------------------------------------------
     int errors = 0;
 
     // Fetch the line that will land as display line L (px_line = L - PREFETCH),
@@ -185,8 +181,8 @@ module scan_out_tb;
         $display("Init done at %0t ns", $time);
 
         // Lines chosen for varied start columns / segment counts:
-        //  L=2 -> col 64 (2 seg), L=3 -> col 352 (3 seg), L=5 -> col 416 (3 seg),
-        //  L=4 -> col 128 (2 seg), L=10 -> col 320 (3 seg), L=17 -> col 288 (2 seg)
+        // L=2 -> col 64 (2 seg), L=3 -> col 352 (3 seg), L=5 -> col 416 (3 seg),
+        // L=4 -> col 128 (2 seg), L=10 -> col 320 (3 seg), L=17 -> col 288 (2 seg)
         fetch_and_check(2);
         fetch_and_check(3);
         fetch_and_check(4);

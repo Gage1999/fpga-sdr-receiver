@@ -11,7 +11,7 @@
 // tests/golden/.
 //
 // Compare-on-load: if the golden doesn't exist, the helper writes it and
-// reports a "WROTE NEW GOLDEN" message — but only when --update-goldens is
+// reports a "WROTE NEW GOLDEN" message - but only when --update-goldens is
 // passed; otherwise this is treated as a failure (golden was missing).
 
 extern int g_update_goldens;

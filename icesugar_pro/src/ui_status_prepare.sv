@@ -1,53 +1,48 @@
-// ui_status_prepare — raw UI fields to shader-state formatter.
-//
-// This block keeps expensive decimal formatting out of the per-pixel shader
-// without building giant combinational dividers. On a UI update it converts the
-// center/low/high frequencies to decimal over 32 clock cycles per number using
-// double-dabble BCD; the display keeps the previous text during that short run.
+// ui_status_prepare - raw UI fields to shader-state formatter.
 
 module ui_status_prepare (
-    input  logic        clk,
-    input  logic        rst,
-    input  logic        update,
+    input logic clk,
+    input logic rst,
+    input logic update,
 
-    input  logic [31:0] freq_hz,
-    input  logic [15:0] span_hz_log2,
-    input  logic [1:0]  demod,
-    input  logic [7:0]  volume,
-    input  logic [7:0]  flags,
+    input logic [31:0] freq_hz,
+    input logic [15:0] span_hz_log2,
+    input logic [1:0] demod,
+    input logic [7:0] volume,
+    input logic [7:0] flags,
 
-    output logic [95:0]  freq_text,       // 12 chars
-    output logic [159:0] band_text,       // 20 chars
-    output logic [31:0]  demod_label,     // 4 chars
-    output logic [15:0]  mode_btn_label,  // 2 chars
-    output logic [15:0]  volume_fill_px,
-    output logic [7:0]   mute_sprite_id,
-    output logic [7:0]   spectrum_start_bin,
-    output logic [8:0]   spectrum_visible_bins
+    output logic [95:0] freq_text,
+    output logic [159:0] band_text,
+    output logic [31:0] demod_label,
+    output logic [15:0] mode_btn_label,
+    output logic [15:0] volume_fill_px,
+    output logic [7:0] mute_sprite_id,
+    output logic [7:0] spectrum_start_bin,
+    output logic [8:0] spectrum_visible_bins
 );
     localparam logic [7:0] CH_SPACE = 8'h20;
-    localparam logic [7:0] CH_DOT   = 8'h2e;
-    localparam logic [7:0] CH_DASH  = 8'h2d;
-    localparam logic [7:0] CH_M     = 8'h4d;
-    localparam logic [7:0] CH_H     = 8'h48;
-    localparam logic [7:0] CH_Z     = 8'h7a;
+    localparam logic [7:0] CH_DOT = 8'h2e;
+    localparam logic [7:0] CH_DASH = 8'h2d;
+    localparam logic [7:0] CH_M = 8'h4d;
+    localparam logic [7:0] CH_H = 8'h48;
+    localparam logic [7:0] CH_Z = 8'h7a;
 
-    localparam logic [1:0] DEMOD_AM   = 2'd1;
+    localparam logic [1:0] DEMOD_AM = 2'd1;
     localparam logic [1:0] DEMOD_GOES = 2'd2;
     localparam logic [1:0] DEMOD_ADSB = 2'd3;
 
-    localparam logic [7:0] SPR_BTN_MUTE    = 8'd10;
+    localparam logic [7:0] SPR_BTN_MUTE = 8'd10;
     localparam logic [7:0] SPR_BTN_MUTE_ON = 8'd11;
 
     typedef enum logic [1:0] {
-        F_IDLE   = 2'd0,
+        F_IDLE = 2'd0,
         F_CENTER = 2'd1,
-        F_LO     = 2'd2,
-        F_HI     = 2'd3
+        F_LO = 2'd2,
+        F_HI = 2'd3
     } fmt_state_e;
 
     fmt_state_e fmt_state;
-    logic [5:0]  bit_count;
+    logic [5:0] bit_count;
     logic [31:0] bin_shift;
     logic [39:0] bcd;
     logic [31:0] pending_lo_hz;
@@ -118,7 +113,7 @@ module ui_status_prepare (
 
     logic [39:0] bcd_adj;
     logic [39:0] bcd_next;
-    assign bcd_adj  = bcd_add3(bcd);
+    assign bcd_adj = bcd_add3(bcd);
     assign bcd_next = {bcd_adj[38:0], bin_shift[31]};
 
     logic [31:0] span_hz;
@@ -140,14 +135,14 @@ module ui_status_prepare (
         band_hi_hz = ((32'hffff_ffff - freq_hz) < span_half)
                    ? 32'hffff_ffff : (freq_hz + span_half);
 
-        volume_scaled = {8'd0, volume} * 16'd149; // ~= volume * 116 / 100, no divider
+        volume_scaled = {8'd0, volume} * 16'd149;
         volume_fill_approx = {7'd0, volume_scaled[15:7]};
         if (volume_fill_approx > 16'd116) volume_fill_approx = 16'd116;
     end
 
     task automatic load_convert(input logic [31:0] value, input fmt_state_e next_state);
         begin
-            bcd       <= 40'd0;
+            bcd <= 40'd0;
             bin_shift <= value;
             bit_count <= 6'd0;
             fmt_state <= next_state;
@@ -156,15 +151,13 @@ module ui_status_prepare (
 
     always_ff @(posedge clk or posedge rst) begin
         if (rst) begin
-            // "100.00 MHz  "
             freq_text <= {CH_SPACE, CH_SPACE, CH_Z, CH_H, CH_M, CH_SPACE,
                           8'h30, 8'h30, CH_DOT, 8'h30, 8'h30, 8'h31};
-            // "099.934-100.066MHz  "
             band_text <= {CH_SPACE, CH_SPACE, CH_Z, CH_H, CH_M, 8'h36, 8'h36,
                           8'h30, CH_DOT, 8'h30, 8'h30, 8'h31, CH_DASH,
                           8'h34, 8'h33, 8'h39, CH_DOT, 8'h39, 8'h39, 8'h30};
-            demod_label <= {CH_SPACE, CH_SPACE, 8'h4d, 8'h46}; // "FM  "
-            mode_btn_label <= {8'h4d, 8'h46};                  // "FM"
+            demod_label <= {CH_SPACE, CH_SPACE, 8'h4d, 8'h46};
+            mode_btn_label <= {8'h4d, 8'h46};
             volume_fill_px <= 16'd58;
             mute_sprite_id <= SPR_BTN_MUTE;
             spectrum_visible_bins <= 9'd256;
@@ -179,20 +172,20 @@ module ui_status_prepare (
             if (update) begin
                 unique case (demod)
                     DEMOD_AM: begin
-                        demod_label <= {CH_SPACE, CH_SPACE, 8'h4d, 8'h41}; // "AM  "
-                        mode_btn_label <= {8'h4d, 8'h41};                  // "AM"
+                        demod_label <= {CH_SPACE, CH_SPACE, 8'h4d, 8'h41};
+                        mode_btn_label <= {8'h4d, 8'h41};
                     end
                     DEMOD_GOES: begin
-                        demod_label <= {8'h53, 8'h45, 8'h4f, 8'h47};       // "GOES"
-                        mode_btn_label <= {8'h4f, 8'h47};                  // "GO"
+                        demod_label <= {8'h53, 8'h45, 8'h4f, 8'h47};
+                        mode_btn_label <= {8'h4f, 8'h47};
                     end
                     DEMOD_ADSB: begin
-                        demod_label <= {8'h42, 8'h53, 8'h44, 8'h41};       // "ADSB"
-                        mode_btn_label <= {8'h44, 8'h41};                  // "AD"
+                        demod_label <= {8'h42, 8'h53, 8'h44, 8'h41};
+                        mode_btn_label <= {8'h44, 8'h41};
                     end
                     default: begin
-                        demod_label <= {CH_SPACE, CH_SPACE, 8'h4d, 8'h46}; // "FM  "
-                        mode_btn_label <= {8'h4d, 8'h46};                  // "FM"
+                        demod_label <= {CH_SPACE, CH_SPACE, 8'h4d, 8'h46};
+                        mode_btn_label <= {8'h4d, 8'h46};
                     end
                 endcase
 

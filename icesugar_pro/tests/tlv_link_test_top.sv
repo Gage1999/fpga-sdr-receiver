@@ -1,23 +1,4 @@
-// tlv_link_test_top — quantitative on-hardware functional test for the TLV
-// receive chain (the TLV analog of link_test_top).
-//
-// The Pluto sends an incrementing 32-bit counter wrapped in TLV_IQ packets
-// (icesugar_stream --mode tlv-test), plus occasional TLV_IMAGE_ROW / TLV_OBJECT
-// packets. This build runs the real RX chain
-//     spi_frame_rx -> async_fifo (byte CDC) -> tlv_demux -> tlv_iq_sink
-// and verifies:
-//   * IQ reassembly: reconstructed words still satisfy prev+1  (green banner)
-//   * framing works: iq_pkt_count climbs                       (cyan bits)
-//   * type routing:  img/obj packets land in their counters    (yellow/magenta)
-//   * no framing slips: unknown/short/stray stay 0             (fault band dark)
-//
-// LCD layout (top to bottom):
-//   banner       green=IQ clean / red=IQ error / blue=no data
-//   err_count    32-bit, red
-//   iq_pkt_count 32-bit, cyan
-//   img_pkt_count 32-bit, yellow
-//   obj_pkt_count 32-bit, magenta
-//   fault band   red if (unknown|short|stray)!=0, else dim green
+// tlv_link_test_top - quantitative on-hardware functional test for the TLV
 
 module tlv_link_test_top (
     input  logic CLK,
@@ -35,7 +16,7 @@ module tlv_link_test_top (
 
 assign LCD_CLK = CLK;
 
-// ---- Resets (one per clock domain) ----
+// Resets (one per clock domain).
 logic [3:0] spi_rst_cnt = 4'd0;
 logic       spi_rst = 1'b1;
 always_ff @(posedge spi_clk) begin
@@ -50,7 +31,7 @@ always_ff @(posedge CLK) begin
     else                   sys_rst <= 1'b0;
 end
 
-// ---- SPI byte deserializer ----
+// SPI byte deserializer.
 logic       fr_valid, fr_sof;
 logic [7:0] fr_byte;
 spi_frame_rx u_fr (
@@ -58,7 +39,7 @@ spi_frame_rx u_fr (
     .byte_valid(fr_valid), .byte_sof(fr_sof), .byte_data(fr_byte)
 );
 
-// ---- Byte CDC (spi_clk -> CLK) ----
+// Byte CDC (spi_clk -> CLK).
 logic [8:0] brd;
 logic       bemp, bful, bpop, bpop_d;
 async_fifo #(.WIDTH(9), .DEPTH(32)) u_bf (
@@ -72,7 +53,7 @@ always_ff @(posedge CLK or posedge sys_rst) begin
     else         bpop_d <= bpop;
 end
 
-// ---- Demux ----
+// Demux.
 logic       pl_valid, pl_sop, pl_eop;
 logic [7:0] pl_byte, pl_type;
 logic [15:0] iq_pkts, img_pkts, obj_pkts, unknown_c, short_c, stray_c;
@@ -87,7 +68,7 @@ tlv_demux u_dm (
     .last_type(last_type)
 );
 
-// ---- IQ sink ----
+// IQ sink.
 logic signed [15:0] oi, oq;
 logic               ov;
 tlv_iq_sink u_sink (
@@ -97,7 +78,7 @@ tlv_iq_sink u_sink (
     .i_data(oi), .q_data(oq), .iq_word_valid(ov)
 );
 
-// ---- +1 invariant check on reconstructed IQ words ----
+// +1 invariant check on reconstructed IQ words.
 logic [31:0] last_word, total_count, err_count;
 logic        seeded;
 wire  [31:0] rx_word = {oi, oq};
@@ -113,11 +94,7 @@ always_ff @(posedge CLK or posedge sys_rst) begin
     end
 end
 
-// ---- Display ----
-// 8 stacked 30px rows. Banner = IQ +1 health; then bit-counts (MSB left,
-// lower 16 bits) for: err, iq_pkts, img_pkts, obj_pkts, unknown, short, stray.
-// The three fault counts are shown separately so we can see WHICH fault and
-// HOW MANY (a small fixed number = benign boundary case; growing = real bug).
+// Display.
 logic [10:0] x = 11'd0;
 logic [9:0]  y = 10'd0;
 always_ff @(posedge CLK) begin

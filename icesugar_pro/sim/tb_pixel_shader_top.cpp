@@ -1,13 +1,4 @@
-// End-to-end parity harness for pixel_shader_top.sv — the synthesizable wrapper
-// (shader core + font_16x32_rom + sprite_rom + spectrum_bin_ram).
-//
-// Unlike tb_pixel_shader.cpp (which backs the shader's ROM ports with C arrays),
-// this drives the *whole block*: the ROMs read from the build/*.mem files and
-// the spectrum bins are written in through the clocked write port, exactly as
-// the Pico/ingest path will on hardware. A 100% match here proves the shader
-// transition is complete end-to-end: real memories + real shader == C spec.
-//
-// Same 6 cases / FB fills as tb_pixel_shader.cpp.
+// End-to-end parity harness for pixel_shader_top.sv - the synthesizable wrapper
 
 #include <cstdio>
 #include <cstdlib>
