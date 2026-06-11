@@ -28,21 +28,13 @@
 
 - IQ - In-phase and Quadrature samples
 
-- LO - Local Oscillator
-
 - FPGA - Field Programmable Gate Array
 
 - FFT - Fast Fourier Transform
 
 - RDS - Radio Data System (the digital sub-carrier on FM broadcast)
 
-- PS name - Program Service name (the 8-character station label in RDS)
-
-- MPX - Multiplex (the composite FM baseband)
-
 - GOES - Geostationary Operational Environmental Satellite
-
-- APT - Automatic Picture Transmission (NOAA weather-image format)
 
 - ADS-B - Automatic Dependent Surveillance Broadcast (aircraft position beacon)
 
@@ -52,8 +44,6 @@
 
 - SDRAM - Synchronous Dynamic Random-Access Memory
 
-- EBR - Embedded Block RAM (the FPGA's on-chip memory)
-
 - TLV - Type-Length-Value (the framing for the Pluto link)
 
 - SPI - Serial Peripheral Interface
@@ -61,17 +51,15 @@
 - #i2c - Inter-Integrated Circuit
 
 - #i2s - Inter-Integrated Circuit Sound
-
-- MCU - Microcontroller Unit
 ]
 #pagebreak()
 #outline(title: "Table of Contents")
 #pagebreak()
 
 = Introduction
-Most software-defined radios end at the speaker. Ours was meant to start there and keep going. The goal of this project was to build an SDR whose primary output is not audio but a screen, where a single RF front end can feed three very different displays. In FM mode the screen shows a live spectrum and a scrolling waterfall while audio plays out of a speaker. In GOES mode it paints a weather-satellite image line by line as it arrives. In ADS-B mode it draws a map of the local airspace with aircraft plotted as dots wherever they broadcast their positions. The user chooses a mode by touch, the radio retunes itself, and the screen changes to match.
+The goal of this project was to build an SDR whose output included both audio and visual components, where a RF front end was used to drive a speaker and an LCD screen. The initial idea was to have support for multiple processing modes that produced different visuals. In FM mode the screen shows a live spectrum and a scrolling waterfall while audio plays out of a speaker. In GOES mode it paints a weather-satellite image line by line as it arrives. In ADS-B mode it draws a map of the local airspace with aircraft plotted as dots wherever they broadcast their positions. The user chooses a mode by touch, the radio retunes itself, and the screen changes to match.
 
-This project is, in spirit, a continuation of an earlier SDR. That radio was built around a custom RF front-end PCB, and the overwhelming majority of the effort went into the analog board, into filters and mixers and impedance-matched traces, rather than into anything the user could see or hear. The lesson from that attempt was to design around a working prototype instead of betting everything on a single fabricated board. So this time we bought the RF front end. A PlutoSky 7020 pairs an Analog Devices AD9363 transceiver with a Xilinx Zynq SoC and hands us calibrated IQ samples over a simple link. With the radio front end taken as a given, we could spend our effort on the digital signal processing and the system integration, which is where the interesting part of this project lives.
+A PlutoSky 7020 pairs an Analog Devices AD9363 transceiver with a Xilinx Zynq SoC. The project starts at the Zynq chip that runs a custom Vivado block design adding an AXI Quad SPI peripheral, wired through the programmable logic to the JP5 expansion header. A custom userspace application on the ARM core uses libiio to configure the AD9363 and capture IQ samples, pack them into TLV frames, and stream them out over that SPI link to the iCESugar-Pro at about 12.5 MHz. This gave us a clean, self-contained data pipe out of the radio and let us focus the rest of the project on signal processing and display.
 
 The design is split across three boards, each doing what it is best at. The PlutoSky is the RF front end. It tunes, samples, and streams IQ. The iCESugar-Pro, a Lattice ECP5 FPGA with 32 MB of SDRAM, is the hub of the system. It ingests the IQ stream, runs all of the digital signal processing, composes the screen, drives the LCD, and feeds an audio DAC. The Raspberry Pi Pico 2W owns the user interface. It reads the capacitive touch panel and sends compact UI-state frames to the FPGA, which in turn relays tuning commands back to the radio. Only one mode runs at a time, because the AD9363 cannot hold two receive frequencies at once, but switching between them is meant to feel seamless.
 
@@ -90,15 +78,15 @@ The mode that works end to end, on hardware, is FM. Tuned to a broadcast station
     [Touch], [Goodix GT911 capacitive controller over #i2c],
     [Audio DAC], [Texas Instruments PCM5102 over #i2s],
   ),
-  caption: [The four hardware blocks of the receiver.],
+  caption: [The six hardware components of the receiver.],
 )
 
 = Elements of Complexity
-The course had already walked us through building a display controller that drives the 800$times$480 RGB LCD from a framebuffer, so the raw video output stage was a known quantity we built on top of rather than the hard part of this project. The original and difficult work was on the radio and memory side, and in stitching three boards into one real-time system. The pieces that carried the most complexity were these:
+The course had already walked us through building a display controller that drives the 800$times$480 RGB LCD from a framebuffer, so the raw video output stage was a known design we built on top of. The original and difficult work was on the radio and memory side, and in stitching three boards into one real-time system. The pieces that carried the most complexity were these:
 
 - *A streaming 256-point FFT in fabric.* `fft256` is built from a `butterfly` datapath and a `twiddle_rom`, running continuously on the incoming IQ to produce one spectrum row per frame.
 
-- *FM demodulation in hardware.* `fm_demod` recovers audio from the complex baseband with the conjugate-product method, turning a few multipliers and an arctangent into real-time audio.
+- *FM demodulation in hardware.* `fm_demod` recovers audio from the complex baseband using the cross-product discriminator: two multiplies and a subtract approximate the instantaneous phase difference without a division or arctangent.
 
 - *A from-scratch SDRAM controller and arbiter.* `sdram_ctrl` and `sdram_arb` bring up the 32 MB SDRAM and share it between three clients on a fixed priority. Getting it reliable meant diagnosing a hardware-level page-boundary fault on the part itself, described later.
 
@@ -106,7 +94,9 @@ The course had already walked us through building a display controller that driv
 
 - *The waterfall compositor.* `compositor` scrolls the history by moving a base-row pointer instead of copying memory, so a new row costs one short write.
 
-- *A custom capacitive touch driver.* The GT911 controller was not provided. We wrote the #i2c driver and the touch handling on the Pico ourselves.
+- *A custom Zynq block design.* Our Vivado block design adapts maia-hdl for the correct PS7 configuration, adds the AXI Quad SPI IP for the JP5 link, and packages the result into BOOT.BIN.
+
+- *A custom capacitive touch driver.* The GT911 controller was not provided. We wrote the #i2c driver and the touch handling on the Pico.
 
 - *Multi-device integration.* Three boards talk over four different links using a custom CRC-checked wire protocol, with the ECP5 acting as the hub and relaying tuning commands back to the radio.
 
@@ -116,17 +106,17 @@ The course had already walked us through building a display controller that driv
 
 = Signal Processing Background
 == IQ Sampling
-The previous project spent most of its effort building the analog stage that turns an RF signal into in-phase and quadrature baseband: a band-pass filter, a low-noise amplifier, a pair of mixers fed by quarter-period-shifted local oscillators, and matched low-pass filters. The AD9363 inside the PlutoSky does all of that on a single chip. We tune it to a center frequency and it hands back a stream of complex samples, each one a pair $(I, Q)$ describing the signal's amplitude and phase relative to the local oscillator. Mathematically the radio gives us the complex baseband
+The AD9363 chip inside the PlutoSky does all the analog RF work of the project. We tune it to a center frequency and it hands back a stream of complex samples, each one a pair $(I, Q)$ describing the signal's amplitude and phase relative to the local oscillator. Mathematically the radio gives us the complex baseband
 #figure($ z[n] = I[n] + j thin Q[n] $)
 already downconverted and decimated to a manageable rate. Everything our design does begins from that stream.
 
-Why complex, and not just one channel? A single real mixer cannot tell a signal above the local oscillator from one an equal distance below it, because the two fold onto the same baseband frequency. Sampling both an in-phase component and a quadrature component shifted by 90 degrees resolves the ambiguity. Positive and negative frequencies become distinguishable, which is exactly what we need both to draw a two-sided spectrum and to demodulate FM. This quadrature mixing was the hard analog problem of the last project, and here it arrives already solved.
-
 == FM Demodulation
-In frequency modulation the information rides in the instantaneous frequency of the signal, and frequency is simply the rate of change of phase. With complex samples the phase is $phi[n] = "atan2"(Q[n], I[n])$, so the demodulated output is the phase difference between consecutive samples. The cleanest way to compute it avoids unwrapping two separate arctangents. We multiply each sample by the conjugate of the previous one and take the angle of the result.
+In frequency modulation the information is contained in the instantaneous frequency of the signal, and frequency is simply the rate of change of phase. With complex samples the phase is $phi[n] = "atan2"(Q[n], I[n])$, so the demodulated output is the phase difference between consecutive samples. The ideal discriminator multiplies each sample by the conjugate of the previous one and takes the angle:
 #figure($ m[n] prop arg(z[n] dot z^*[n-1]) =
   "atan2"(I[n-1]Q[n] - I[n]Q[n-1], thick I[n]I[n-1] + Q[n]Q[n-1]) $)
-The two arguments are a cross product and a dot product of consecutive IQ vectors, a handful of multiplies and adds, and a single arctangent runs on their ratio. The `fm_demod` module computes exactly this. What falls out is the FM multiplex: mono audio at baseband, a stereo difference signal above it, and the RDS sub-carrier higher still.
+The numerator is the cross product and the denominator is the dot product of consecutive IQ vectors. The `fm_demod` module drops the dot product and arctangent, using only the cross product as the discriminator output:
+#figure($ m[n] prop I[n-1]Q[n] - I[n]Q[n-1] $)
+This is two multiplies and a subtract. It is an approximation of the full atan2, valid when signal amplitude is roughly constant, which it is after the AD9363's automatic gain control.
 
 == Spectrum and Waterfall
 The same IQ stream that feeds the demodulator also feeds a 256-point FFT (`fft256`, built from a `butterfly` datapath and a `twiddle_rom`). Taking the magnitude of each bin gives the power at that frequency, and mapping magnitude through a color palette gives one row of pixels. Stacked over time, those rows are the waterfall. The vertical axis is time, the horizontal axis is frequency, and brightness is signal strength, so a steady carrier draws a bright vertical streak and a transient flashes and scrolls away. The instantaneous trace across the top is the spectrum. Both are derived from the same FFT output. The spectrum is the newest row drawn as a line, and the waterfall is its history.
@@ -136,7 +126,11 @@ FM broadcast carries a low-rate digital channel, the Radio Data System, on a sub
 
 = System Design
 == The PlutoSky Front End
-The PlutoSky 7020 pairs the AD9363 with a Xilinx Zynq SoC, and runs a build based on the open-source maia-sdr firmware. The Zynq's programmable logic streams calibrated IQ out of an AXI Quad SPI block on the JP5 expansion header at roughly 12.5 MHz. At 32 bits per complex sample that budget is about 390 thousand complex samples per second, and the FM path is sized to fit inside it. The PlutoSky is also where the GOES and ADS-B decoders run. They are heavier, more sequential workloads that suit the Zynq's ARM cores better than the FPGA fabric, and their results are meant to cross the same link in a compact form rather than as raw IQ.
+The PlutoSky 7020 pairs the Analog Devices AD9363 RF transceiver with a Xilinx XC7Z020 Zynq SoC in a CLG400 package. The starting point for the programmable logic was the maia-hdl `pluto_iio` block design, which provides the `axi_ad9361` RF interface, ADC DMA, and the maia-sdr spectrometer IP. An AXI Quad SPI instance was added to the design and mapped into the AXI GP0 address space so the ARM core can reach it through a memory-mapped register interface. This design is built using `system_bd.tcl` script.
+
+On top of the block design, `system_top.v` adds the physical layer: IOBUF instantiations for the AD9363 control and explicit routing of the JP5 SPI signals from the AXI Quad SPI IP to Bank 13 output pins. The bitstream, First Stage Bootloader, and U-Boot are packed into a single BOOT.BIN image, so the programmable logic is configured and the JP5 outputs are driven before the Linux kernel starts.
+
+The ARM userspace runtime uses libiio to configure the AD9363: center frequency, a 2.6042 MHz ADC sample rate, and receive gain. IQ samples arrive in a kernel DMA buffer and a software decimation step of ten reduces the stream to 260,417 complex samples per second, the rate the JP5 link is sized for. The runtime packs those samples into TLV_IQ frames and writes them through the AXI SPI registers to the JP5 header, driving the iCeSugar as a continuous SPI master at about 12.5 MHz. Between outgoing bursts the runtime drains the SPI receive FIFO to pick up command bytes the ECP5 has queued on the MISO line. A SET_FREQ command calls back into libiio to retune the AD9363 center frequency, completing the control loop that starts at the touchscreen.
 
 == The Radio Pipeline
 Everything past the radio happens in the ECP5. Bytes arrive on the JP5 SPI link, `spi_frame_rx` reassembles them, and `tlv_demux` routes each packet by type. IQ packets land in `tlv_iq_sink`, which feeds the three branches shown in the figure below: the FFT branch for the spectrum and waterfall, the `fm_demod` branch for audio out through an `audio_fifo` and `i2s_tx` to the PCM5102, and the RDS branch off the recovered multiplex. This pipeline, and the SDRAM controller that backs it, is the heart of the project's original work.
@@ -146,17 +140,12 @@ Everything past the radio happens in the ECP5. Bytes arrive on the JP5 SPI link,
 == The Display Path
 The display controller that turns a framebuffer into RGB and sync signals for the LCD came out of the course, so we treated the video output stage as a building block. Our work on the display side was making that framebuffer carry live radio data in real time, which is built around the iCESugar-Pro's 32 MB SDRAM. The framebuffer, the waterfall history, and the GOES and ADS-B image regions all live in SDRAM, and three clients share it through a fixed-priority arbiter (`sdram_arb`). The highest priority is the scan-out reader, because missing a line shows up immediately as a tear. Below it sit the compositor's writes and the ingest of new IQ.
 
-A `scan_timing` module owns the 800$times$480 at 60 Hz LCD timing and runs in the pixel-clock domain at about 30 MHz, while the SDRAM, arbiter, and compositor run at 100 MHz. The `line_cache` between them is a small on-chip buffer filled one line ahead of the beam. It is both the latency cushion that absorbs arbiter stalls and the crossing point between the two clock domains. The `compositor` advances the waterfall by one row not by copying memory but by moving a base-row pointer that the scan-out reader follows, so a new spectrum row costs a single short write. On top of the SDRAM-backed line, the `pixel_shader` draws the live overlay, which is the spectrum trace, the status bar, the frequency and band readout, the mode and volume indicators, and the touch crosshair, from font and sprite ROMs and the current UI state, emitting one RGB pixel per clock.
+A `scan_timing` module owns the 800$times$480 at 60 Hz LCD timing and runs in the pixel-clock domain at about 30 MHz, while the SDRAM, arbiter, and compositor run at 100 MHz. The `line_cache` between them is a small on-chip buffer filled one line ahead of the beam. It is both the latency cushion that absorbs arbiter stalls and the crossing point between the two clock domains. The `compositor` advances the waterfall by one row not by moving a base-row pointer that the scan-out reader follows, so a new spectrum row costs a single short write. On top of the SDRAM-backed line, the `pixel_shader` draws the live overlay, which is the spectrum trace, the status bar, the frequency and band readout, the mode and volume indicators, and the touch crosshair, from font and sprite ROMs and the current UI state, emitting one RGB pixel per clock.
 
 #include "diagrams/display-pipeline.typ"
 
 == The Touch Interface and Control Loop
 The Pico 2W reads the Goodix GT911 capacitive panel over #i2c and keeps the authoritative copy of the user-facing state: mode, center frequency, volume, mute, and touch position. It sends that state to the FPGA as framed packets, each one a `0xA5` magic byte, an opcode, a little-endian length, a payload, and a CRC16-CCITT check, defined once in portable C and shared by both ends. On the FPGA two parsers read the same frames. `ui_wire_rx` keeps the fields the shader needs for the status bar, RDS line, touch overlay, and zoom, while `spi_ui_cmd_rx` extracts the fields that should become radio commands. Those commands, which set mode, frequency, volume, and mute, are applied locally by `control_regs` for audio and queued by `spi_backchannel` to be relayed back to the PlutoSky over the JP5 return line. The result is a closed loop. A touch on the glass changes the Pico's state, which retunes the radio.
-
-== Implementation Notes
-*The SDRAM page-boundary workaround.* The single most stubborn hardware problem was a band of streaks across the display. The cause was not the RTL. This board's SDRAM part turned out to be unreliable for bursts that reach the far half of a row, and any access crossing the 512-word page boundary returned a few corrupt words. Three controller-level fixes, namely shorter fixed-length bursts, guard cycles, and a slower clock, were each built and tested, and none cleared it, which told us it was a physical margin rather than a logic bug. The fix was to change how a pixel maps to an address. The framebuffer stores only the first 256 words of each SDRAM row and leaves the upper half unused, so no burst ever reaches the marginal column. The logical framebuffer is still a flat array of pixels and the rest of the design never sees the difference. Only the word-to-address function changed, and the writer and reader both carry the same mapping so they cannot disagree. It costs twice the address space, which on a 32 MB part is free.
-
-*Zoom by decimation.* Zooming the spectrum is handled without rescaling any pixels. A `span_hz_log2` field from the Pico selects the visible RF span, and `spectrum_zoom_decimator` changes the rate of IQ samples entering the FFT rather than the FFT itself. Narrower spans decimate the input more, so the 256 bins always fill the same 256 columns of screen while the hertz per bin shrinks. The display density stays fixed and only the frequency scale changes. It is a first-pass approach. A true channelizer would also shift center frequency in fabric, whereas here a center change is sent back to retune the PlutoSky's oscillator, and the waterfall history deliberately keeps whatever scale each row was drawn at.
 
 = User Guide
 The receiver is meant to be used through the touchscreen alone. On power-up the three boards boot on their own and the radio comes up in FM mode, showing a live spectrum across the top of the screen with a waterfall scrolling beneath it. A status bar reports the current mode, the center frequency, the visible band, and the volume.
@@ -193,6 +182,7 @@ Audio plays out of the speaker through the PCM5102 DAC, and any touch is echoed 
 
 = Software Libraries and Tools
 - *maia-sdr / maia-hdl* form the base firmware and FPGA design on the PlutoSky, providing the AD9363 interface and the IQ data path.
+- *tezuka_fw* is the open-source Zynq firmware builder used to provide the pre-built FSBL, U-Boot, Linux kernel, device tree, and ramdisk for the PlutoSky. Our Vivado bitstream is combined with tezuka's bootloader components to produce the final BOOT.BIN.
 - *libiio* on the PlutoSky reads IQ samples from the radio in userspace.
 - *Raspberry Pi Pico SDK* builds the RP2350 firmware that drives the GT911 and the SPI link.
 - *SDL2* renders the host harness on a laptop, used only for development.
@@ -208,9 +198,6 @@ Audio plays out of the speaker through the PCM5102 DAC, and any touch is echoed 
 - *#i2s*, carrying stereo audio from the ECP5 to the PCM5102 DAC.
 - *AXI*, inside the Zynq, connecting the ARM cores to the AD9361 interface and the JP5 SPI block.
 - *TLV framing* on the PlutoSky to ECP5 link, a type byte, a big-endian length, and a payload, used to carry IQ, image rows, and object lists over one stream.
-- *Custom #box[`0xA5`] wire protocol* on the Pico to ECP5 link, with a magic byte, opcode, little-endian length, payload, and a CRC16-CCITT check.
-- *RGB-parallel video* with HSYNC, VSYNC, and DE to the LCD.
-- *RDS*, the broadcast data protocol decoded from the FM multiplex.
 
 = Wiring Diagram
 #include "diagrams/wiring.typ"
@@ -234,10 +221,15 @@ The pin assignments for the three wired links are listed below, grouped by bus.
     table.cell(rowspan: 2)[Touch #i2c\ (GT911 $arrow.r$ Pico)],
       [SDA], [GT911 SDA], [Pico GP4],
       [SCL], [GT911 SCL], [Pico GP5],
+    table.cell(rowspan: 4)[#i2s\ (ECP5 $arrow.r$ PCM5102)],
+      [BCLK], [ECP5 C3], [PCM5102 BCK],
+      [LRCLK], [ECP5 R8], [PCM5102 LRCK],
+      [SDATA], [ECP5 C4], [PCM5102 DIN],
+      [SCK], [ECP5 E3], [PCM5102 SCK],
   ),
-  caption: [Pin assignments for the inter-board links. The audio (#i2s) and video
-  (RGB) lines use the iCESugar-Pro header pinout from the course display
-  controller, and a common ground is shared across all boards.],
+  caption: [Pin assignments for the inter-board links. The video (RGB) lines use
+  the iCESugar-Pro header pinout from the course display controller. A common ground is shared
+  across all boards.],
 )
 
 = Meeting the Proposal Requirements
@@ -253,10 +245,24 @@ Our proposal described an SDR that tunes FM or satellite-image radio, shows audi
 One architectural change from the proposal is worth noting. We had planned a direct Pico-to-PlutoSky UART for tuning. In the built system the Pico talks only to the ECP5, and the ECP5 relays tuning commands to the PlutoSky over the JP5 return line. Making the FPGA the single hub simplified the wiring and kept all control on one protocol.
 
 = Testing
-The portability contract makes most of the system testable away from hardware. A suite of host-side unit and golden-image tests exercises the compositor and pixel shader against stored reference images: a default screen, the spectrum trace, the touch crosshair, the mute indicator, a waterfall stepped several rows, and others. A change that alters a single pixel is caught in continuous integration without a board attached. Because the C reference is also the gateware's specification, those same inputs and goldens are what validate the SystemVerilog. A Verilator parity job renders the same inputs through the C model and through the RTL shader and checks that they are byte-for-byte identical, including the generated ROMs.
+Testing followed the signal chain from the radio front end through to the display and audio output, verifying each layer before connecting it to the next.
 
-On hardware, bring-up followed a deliberate order so that each stage could be checked on its own: the SDRAM controller alone with a write-read pattern, then scan-out of a solid color, then the line cache and arbiter with a moving test pattern, then the Pico SPI link and a live touch cursor, then the font and sprite ROMs and the status bar, then the compositor's waterfall from synthetic data, and finally real IQ from the PlutoSky. Each step was independently observable with a logic analyzer while the same UI logic ran in the host harness for comparison. This is the lesson from the previous project put into practice: build on something that runs, and add one verifiable thing at a time.
+== PlutoSky and the SPI Link
+The PlutoSky was verified before any FPGA work depended on it. A C test program reads and writes the AXI Quad SPI register block to confirm the Vivado IP is correctly wired and reachable from the ARM core. On the host side, a Python script tunes the AD9363, captures IQ over SSH, and runs an FM demodulator to confirm the radio front end produces a clean baseband signal independently of the FPGA demodulation path.
 
+== ECP5 Module Simulations
+Each functional block on the ECP5 has an Icarus Verilog testbench that runs without hardware. The FM discriminator is tested against known IQ inputs to verify the cross-product output. The FFT is checked for correct DC bin placement and complex-tone bin accuracy. The audio FIFO is exercised through fill, skip, and repeat conditions. The #i2s transmitter is checked for correct bit and frame timing. The zoom decimator is verified for output rate and sample alignment at each zoom level. The TLV receive chain is tested at each stage: the byte deserializer and start-of-frame marking, the packet demultiplexer routing by type byte, and the full chain end to end. The UI wire receiver is tested for correct frame parsing and field extraction. Finally, an integration simulation covers the SDRAM controller, arbiter, scan-out reader, line cache, and compositor together.
+
+== Hardware Diagnostic Bitstreams
+Before the full build was assembled, each subsystem was verified on hardware with a minimal diagnostic bitstream that isolated one layer at a time. The SDRAM controller was tested first with a write/read pattern, with the LCD showing green on pass. The JP5 TLV link was then verified with an incrementing counter loopback that confirmed framing integrity end to end. The #i2s and DAC wiring were confirmed with a fixed sine tone requiring no SPI or FM demodulation. The FM demodulator was then exercised in isolation using an internally generated synthetic IQ source, with no PlutoSky connected. Finally, a minimal FM audio path ran live IQ from the PlutoSky through the demodulator to the DAC.
+
+Bring-up followed this deliberate order so that each stage could be checked on its own: the SDRAM controller alone, then scan-out of a solid color, then the line cache and arbiter with a moving test pattern, then the Pico SPI link and a live touch cursor, then the font and sprite ROMs and the status bar, then the compositor waterfall from synthetic data, and finally real IQ from the PlutoSky.
+
+== C Host Tests
+The shared UI and protocol code and the C rendering model have a host test suite that runs without any hardware attached. Tests cover the UI state struct packing and defaults, wire protocol frame encode and decode including CRC16-CCITT validation, golden-image output from the pixel shader, golden-image output from the framebuffer compositor, framebuffer swap and access behavior, and the touch and UI state-machine event sequences. Golden images pin the expected visual output for each scenario: a default screen, the spectrum trace, the touch crosshair, the mute indicator, a waterfall stepped several rows, and others. A change that shifts a single pixel fails the suite without a board attached.
+
+== Verilator Parity
+The pixel shader and ROM wrappers are checked against the C reference model using Verilator. The same inputs feed both the RTL shader and the C reference, and the job fails if any output byte differs. The generated font and sprite memory files are compared against their C source arrays the same way. Because the C model is also the gateware specification, these checks confirm the RTL produces pixel-identical output to the reference.
 = AI Usage
 We used AI as a coding assistant on well-scoped parts of the project, and it helped most where we could check its output exactly.
 
@@ -265,11 +271,3 @@ We used AI as a coding assistant on well-scoped parts of the project, and it hel
 - *For the test suite,* we used AI to fill out coverage, turning a described scenario into a golden-image or unit test, which we then checked once against the live harness and locked in as a regression.
 
 // Gage: add your AI uses here as more "for X, we did Y" bullets.
-
-= Acknowledgements
-Thanks to the CS122A course staff for the display-controller starting point and the iCESugar-Pro framebuffer reference, whose SDRAM controller and PHY for this board gave our own memory bring-up a place to start. Thanks also to the open-source projects this work stands on: maia-sdr for the PlutoSky firmware and FPGA design, and Yosys, nextpnr, and Project Trellis for the open ECP5 toolchain. This was a two-person project by Marco Miralles and Gage Shaddock.
-
-= Reflection
-Compared with the previous attempt, the result this time is one we are happy with. That project ended with a front end and a few isolated signs of life on an expensive board. This one is a radio you can use: tune an FM station by touch, hear it, and watch its spectrum and waterfall move in real time. Buying the RF front end instead of building it was the right call. It moved the effort to the part of the problem we actually wanted to work on, and it meant the project stood on a working prototype rather than a single fabricated gamble.
-
-The honest gaps are RDS and the two image modes. RDS decodes correctly in simulation but would not lock on live hardware, so it stayed a simulation result. GOES and ADS-B are decoded on the PlutoSky and their results already cross the link, but the compositor path that would paint a weather image or plot aircraft on a map is not yet wired, so today they are received and counted rather than shown. The architecture was built to accommodate them, with the SDRAM regions reserved, the packet types defined, and the compositor given a place for each, so finishing them is the clear next step. What we set out to prove, that a single FPGA can ingest a radio stream and render its own display in real time, is proven for FM. Extending that same machinery to the other two modes is the work that remains.

@@ -63,20 +63,6 @@ docs/             public architecture, interface, and host-model docs
 proposal/         project proposal
 ```
 
-### The portability contract
-
-Every line in `shared/`, `icesugar_pro/model/`, and `pico2w/src/ui_logic.c` is
-pure portable C (only `<stdint.h>`, `<stddef.h>`, `<string.h>`, `<stdbool.h>` - no
-malloc, no stdio, no platform headers). The host harness wraps it through a thin
-HAL; the Pico firmware wraps it through a different HAL with the same signatures.
-The same test inputs/goldens validate that the gateware produces byte-equal
-output to the C reference in
-`icesugar_pro/model/src/pixel_shader.c` and `icesugar_pro/model/src/fb_compositor.c`.
-The Pico itself does no rendering - it only depends on `shared/`.
-
-See [docs/fpga-sdr-receiver-harness.md](docs/fpga-sdr-receiver-harness.md) and
-[docs/fpga-sdr-receiver-architecture.md](docs/fpga-sdr-receiver-architecture.md).
-
 ---
 
 ## Getting started - PlutoSky (RF front end)
@@ -125,6 +111,8 @@ cmake -B build
 cmake --build build -j
 ctest --test-dir build --output-on-failure
 ./build/host_harness             # live demo
+```
+
 ## Hardware
 
 | Property | Value |
@@ -161,11 +149,3 @@ ctest --test-dir build --output-on-failure
 **GOES mode.** The display includes a satellite-image mode for GOES LRIT/HRIT
 work. FM is the showcase path; GOES support remains an extension path in the
 PlutoSky runtime and display protocol.
-
-**Professor's framebuffer demo.** UCR provides an
-[icesugar-pro-framebuffer](https://github.com/UCR-CS122A/icesugar-pro-framebuffer)
-demo that drives an LVGL framebuffer from a soft CPU. That is **not** our
-architecture - we render directly in fabric (compositor + live pixel shader), not
-from a CPU framebuffer - so we're not adopting its rendering approach. Its **SDRAM
-controller / PHY** for this exact board is, however, a useful reference for our own
-SDRAM implementation notes (see [`icesugar_pro/README.md`](icesugar_pro/README.md)).

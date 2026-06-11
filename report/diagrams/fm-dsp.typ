@@ -33,6 +33,7 @@
   caption: [The FM signal-processing chain inside the ECP5. One IQ stream splits
   three ways: an FFT branch that feeds the spectrum and waterfall, an audio
   branch through the FM demodulator to the DAC, and an RDS branch that recovers
-  the station name from the FM multiplex. The spectrum and waterfall outputs are
-  written to SDRAM by the compositor in the display pipeline.],
+  the station name from the FM multiplex (verified in simulation; not
+  instantiated in the final hardware build). The spectrum and waterfall outputs
+  are written to SDRAM by the compositor in the display pipeline.],
 )
