@@ -49,35 +49,35 @@ int main(void)
 
     printf("AXI SPI at 0x%08X\n", SPI_BASE);
 
-    /* Reset */
+    // Reset
     spi_wr(SRR, 0x0000000A);
 
-    /* Read SPICR after reset - should be 0x180 (INHIBIT | MANUAL_SS set by reset) */
+    // Read SPICR after reset - should be 0x180 (INHIBIT | MANUAL_SS set by reset)
     uint32_t cr = spi_rd(SPICR);
     printf("SPICR after reset: 0x%03X (expect 0x180)\n", cr);
     if (cr != 0x180) { printf("  FAIL\n"); pass = 0; }
     else              { printf("  PASS\n"); }
 
-    /* Write a known value to SPICR and read it back */
+    // Write a known value to SPICR and read it back
     uint32_t cr_set = SPICR_INHIBIT | SPICR_MANUAL_SS | SPICR_RXRST | SPICR_TXRST |
                       SPICR_CPHA | SPICR_CPOL | SPICR_MASTER | SPICR_SPE;
     spi_wr(SPICR, cr_set);
     uint32_t cr_rb = spi_rd(SPICR);
-    /* RXRST and TXRST self-clear, so mask them out for comparison */
+    // RXRST and TXRST self-clear, so mask them out for comparison
     uint32_t mask = ~(SPICR_RXRST | SPICR_TXRST);
     printf("SPICR write=0x%03X readback=0x%03X (RXRST/TXRST self-clear, masked)\n",
            cr_set & mask, cr_rb & mask);
     if ((cr_rb & mask) != (cr_set & mask)) { printf("  FAIL\n"); pass = 0; }
     else                                    { printf("  PASS\n"); }
 
-    /* Read SPISSR - bit 0 must be 1 (CS[0] deasserted, active-low).
-     * C_NUM_SS_BITS=1: only bit 0 is implemented; bits [31:1] read as 0. */
+    // Read SPISSR - bit 0 must be 1 (CS[0] deasserted, active-low).
+    // C_NUM_SS_BITS=1: only bit 0 is implemented; bits [31:1] read as 0.
     uint32_t ssr = spi_rd(SPISSR);
     printf("SPISSR: 0x%08X (expect bit 0 = 1, upper bits 0 with 1 SS)\n", ssr);
     if (!(ssr & 0x1)) { printf("  FAIL\n"); pass = 0; }
     else               { printf("  PASS\n"); }
 
-    /* Read SPISR - TX_EMPTY should be set when TX FIFO is empty */
+    // Read SPISR - TX_EMPTY should be set when TX FIFO is empty
     uint32_t sr = spi_rd(SPISR);
     printf("SPISR: 0x%02X  TX_EMPTY=%d (expect 1)  Slave_MODF=%d (expect 0)\n",
            sr, !!(sr & SPISR_TX_EMPTY), !!(sr & 0x20));

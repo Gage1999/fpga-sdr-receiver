@@ -127,7 +127,6 @@ future map-rendering path and are not required for the final FM bitstream.
 
 - The final display path uses the local SDRAM controller, arbiter, line cache,
   compositor, and scan-out stack.
-- The project renders directly in FPGA fabric rather than through a soft CPU
-  framebuffer.
+- The project renders directly in FPGA fabric.
 - The PlutoSky pair for the final build is `plutosky/src/main.c` built as
   `sdr_main`; `plutosky/src/icesugar_stream.c` is only a diagnostic streamer.

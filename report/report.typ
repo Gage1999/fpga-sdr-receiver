@@ -6,10 +6,7 @@
   center,
     text(20pt)[
       CS122A Final Project\
-      An FPGA Software-Defined Radio Receiver\
-
-    #text(16pt)[
-      Spectrum, Weather-Satellite, and Aircraft Display on an ECP5]
+      A FPGA Software-Defined Radio Receiver\
 
     #v(1em)
     #text(16pt)[
@@ -263,11 +260,18 @@ The shared UI and protocol code and the C rendering model have a host test suite
 
 == Verilator Parity
 The pixel shader and ROM wrappers are checked against the C reference model using Verilator. The same inputs feed both the RTL shader and the C reference, and the job fails if any output byte differs. The generated font and sprite memory files are compared against their C source arrays the same way. Because the C model is also the gateware specification, these checks confirm the RTL produces pixel-identical output to the reference.
+
 = AI Usage
-We used AI as a coding assistant on well-scoped parts of the project, and it helped most where we could check its output exactly.
+We used AI as a tool to help develop test cases and learn new tools such as the vivado toolchain.
 
-- *For the display path,* we used AI to write SystemVerilog modules and the C reference model they are checked against. The two are tied to the same specification by an end-to-end harness: a Verilator job feeds identical inputs through the RTL and the C model and fails if a single pixel comes out different, and the generated ROMs are compared the same way. Because of that, anything AI wrote for the display had to clear a hard test before we kept it, namely matching the reference pixel for pixel. The harness did the judging in place of a code review, which is what made it worth leaning on AI here.
+- *For the PlutoSky tests,* We used AI to help verify the initial functionality of the PlutoSky and write an fm test that wrote fm audio to a file and was used repeatedly to verify the RF front end still worked after flashing the new Vivado bitstream.
 
-- *For the test suite,* we used AI to fill out coverage, turning a described scenario into a golden-image or unit test, which we then checked once against the live harness and locked in as a regression.
+- *For the iCESugar-Pro tests,* We used AI to help us strengthen and fix bugs in the testbenches and test top modules located in icesugar-pro/tb and icesugar-pro/tests respectfully. 
 
-// Gage: add your AI uses here as more "for X, we did Y" bullets.
+- *For the ROM generation tools,* We used AI to write the scripts that define the font glyphs, button sprites, and color palettes and convert them into the .mem files the ECP5 synthesis loads into block RAM. These are located in tools/
+
+- *For the host test suite,* We used AI to create tests focused on verifying the shared C reference code. These tests are located witihin the tests/ folder. 
+
+- *For the #i2c touch controller,* We used AI to help us identify the specific touch controller that was purchased. This code is found in pico2w/i2c_touch_probe and helped us get started with using the touch interface.
+
+- *For the GOES and ADS-B processing,* We used AI to create code for ADS-B processing and GOES processing as two seperate modes outside of FM. These modes were never fully implemented but the plutosky code is contained in plutosky/src/ and includes the goes and ads files.
