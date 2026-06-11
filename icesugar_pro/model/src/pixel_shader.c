@@ -351,9 +351,17 @@ static uint16_t shade_spectrum(uint16_t lx, uint16_t ly, uint16_t w, uint16_t h,
     uint16_t visible = st->spectrum_visible_bins;
     if (visible == 0 || visible > UI_SPECTRUM_BINS) visible = UI_SPECTRUM_BINS;
 
-    // TODO_FPGA: replace this divide with a reciprocal LUT keyed on region width.
-    uint16_t bin_idx = (uint16_t)(st->spectrum_start_bin +
-                                  (uint32_t)lx * visible / w);
+    // Match the SV bit-shift approximation exactly (pixel_shader.sv span_bin_off).
+    uint16_t bin_off;
+    switch (visible) {
+        case 128: bin_off = (lx >> 3) + (lx >> 5) + (lx >> 8); break;
+        case  64: bin_off = (lx >> 4) + (lx >> 6) + (uint16_t)(lx >> 9); break;
+        case  32: bin_off = (lx >> 5) + (lx >> 7); break;
+        case  16: bin_off = (lx >> 6) + (lx >> 8); break;
+        case   8: bin_off = (lx >> 7) + (lx >= 700u ? 1u : 0u); break;
+        default:  bin_off = (lx >> 2) + (lx >> 4) + (lx >> 7); break;
+    }
+    uint16_t bin_idx = (uint16_t)(st->spectrum_start_bin + bin_off);
     if (bin_idx >= UI_SPECTRUM_BINS) bin_idx = UI_SPECTRUM_BINS - 1;
     uint16_t mag = st->spectrum_bins[bin_idx];           // 0..65535
     uint32_t bar_h = ((uint32_t)mag * h) >> 16;          // 0..h
