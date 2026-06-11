@@ -190,12 +190,12 @@ module pixel_shader (
     logic [8:0]  span_bin_sum;
     always_comb begin
         unique case (spectrum_visible_bins)
-            9'd128: span_bin_off = x[9:3] + x[9:5] + x[9:8];
-            9'd64:  span_bin_off = x[9:4] + x[9:6] + {7'd0, x[9]};
-            9'd32:  span_bin_off = x[9:5] + x[9:7];
-            9'd16:  span_bin_off = x[9:6] + x[9:8];
+            9'd128: span_bin_off = {1'b0, x[9:3]} + {3'b0, x[9:5]} + {6'b0, x[9:8]};
+            9'd64:  span_bin_off = {2'b0, x[9:4]} + {4'b0, x[9:6]} + {7'd0, x[9]};
+            9'd32:  span_bin_off = {3'b0, x[9:5]} + {5'b0, x[9:7]};
+            9'd16:  span_bin_off = {4'b0, x[9:6]} + {6'b0, x[9:8]};
             9'd8:   span_bin_off = {5'd0, x[9:7]} + ((x >= 10'd700) ? 8'd1 : 8'd0);
-            default: span_bin_off = x[9:2] + x[9:4] + x[9:7]; // ~= x * 256 / 800
+            default: span_bin_off = x[9:2] + {2'b0, x[9:4]} + {5'b0, x[9:7]}; // ~= x * 256 / 800
         endcase
     end
     assign span_bin_sum = {1'b0, spectrum_start_bin} + {1'b0, span_bin_off};
